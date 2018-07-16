@@ -1,13 +1,11 @@
 ﻿using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.UI;
 
 public class WallPaper : MonoBehaviour
-{
-    [DllImport("user32.dll")]
-    public static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, uint fuFlage, uint timeout, IntPtr result);
-
+{ 
     [DllImport("user32.dll")]
     static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
@@ -23,23 +21,29 @@ public class WallPaper : MonoBehaviour
     [DllImport("user32.dll")]
     public static extern bool EnumWindows(EnumWindowsProc proc, IntPtr lParam);
     public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
-     
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, uint fuFlage, uint timeout, IntPtr result);
+
     public Text t;
 
     public int ResWidth;//窗口宽度
     public int ResHeight;//窗口高度
-
+    IntPtr wallPaper;
     void Main()
     {
         ResWidth = Screen.width;
         ResHeight = Screen.height;
-        Screen.SetResolution(ResWidth, ResHeight, true, 30);
+        //Screen.SetResolution(ResWidth, ResHeight, true, 30);
 
         if (Application.platform == RuntimePlatform.WindowsPlayer)
         {
-            IntPtr wallPaper = FindWindow("WallPaper", null);
-            IntPtr progman = FindWindow("Progman", null); 
+            wallPaper = FindWindow("WallPaper", null);
+            IntPtr progman = FindWindow("Progman", null);
+
             IntPtr result = IntPtr.Zero;
+            // 向 Program Manager 窗口发送 0x52c 的一个消息，超时设置为0x3e8（1秒）。
+            SendMessageTimeout(progman, 0x52c, IntPtr.Zero, IntPtr.Zero, 0, 0x3e8, result);
 
             EnumWindows((hwnd, lParam) =>
             {
@@ -55,7 +59,7 @@ public class WallPaper : MonoBehaviour
                 return true;
             }, IntPtr.Zero);
 
-            SetParent(wallPaper, progman);
+            SetParent(wallPaper, progman); 
         }
     }
 
@@ -67,8 +71,17 @@ public class WallPaper : MonoBehaviour
 
     // Update is called once per frame
     void Update()
-    {
+    { 
 
+    }
+
+    private void OnApplicationFocus(bool focus)
+    {
+        t.text += " focus:" + focus; 
+        if(focus)
+        {
+            //ShowWindow(wallPaper, 0);
+        }
     }
 
 }
