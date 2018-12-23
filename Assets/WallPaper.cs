@@ -5,7 +5,7 @@ using UnityEngine;
 using UnityEngine.UI;
 
 public class WallPaper : MonoBehaviour
-{
+{ 
     [DllImport("user32.dll")]
     static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
@@ -25,48 +25,19 @@ public class WallPaper : MonoBehaviour
     [DllImport("user32.dll")]
     public static extern IntPtr SendMessageTimeout(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam, uint fuFlage, uint timeout, IntPtr result);
 
-    #region 钩子相关
-    public delegate int HookProc(int nCode, int wParam, IntPtr lParam);
-    private static int hHook = 0;
-    public const int WH_KEYBOARD_LL = 13;
+    public delegate bool WNDENUMPROC(IntPtr hwnd, uint lParam);
 
-    //LowLevel键盘截获，如果是WH_KEYBOARD＝2，并不能对系统键盘截取，会在你截取之前获得键盘。 
-    private static HookProc KeyBoardHookProcedure;
-    //键盘Hook结构函数 
-    [StructLayout(LayoutKind.Sequential)]
-    public class KeyBoardHookStruct
-    {
-        public int vkCode;
-        public int scanCode;
-        public int flags;
-        public int time;
-        public int dwExtraInfo;
-    }
-    //设置钩子 
-    [DllImport("user32.dll")]
-    public static extern int SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hInstance, int threadId);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool EnumWindows(WNDENUMPROC lpEnumFunc, uint lParam);
 
-    [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
-    //抽掉钩子 
-    public static extern bool UnhookWindowsHookEx(int idHook);
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr GetParent(IntPtr hWnd);
 
     [DllImport("user32.dll")]
-    //调用下一个钩子 
-    public static extern int CallNextHookEx(int idHook, int nCode, int wParam, IntPtr lParam);
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, ref uint lpdwProcessId);
 
     [DllImport("kernel32.dll")]
-    public static extern int GetCurrentThreadId();
-
-    [DllImport("kernel32.dll")]
-    public static extern IntPtr GetModuleHandle(string name);
-    #endregion
-
-    [DllImport("user32.dll", EntryPoint = "keybd_event")]
-    public static extern void Keybd_event(byte bvk,//虚拟键值 ESC键对应的是27
-                                            byte bScan,//0
-                                            int dwFlags,//0为按下，1按住，2释放
-                                            int dwExtraInfo);
-
+    public static extern void SetLastError(uint dwErrCode);
 
     public Text t;
 
@@ -85,7 +56,7 @@ public class WallPaper : MonoBehaviour
 
         if (Application.platform == RuntimePlatform.WindowsPlayer)
         {
-            wallPaper = FindWindow("WallPaper", null);
+            wallPaper = GetProcessWnd();
             progman = FindWindow("Progman", null);
 
             result = IntPtr.Zero;
@@ -108,70 +79,7 @@ public class WallPaper : MonoBehaviour
             }, IntPtr.Zero);
 
             SetParent(wallPaper, progman);
-
-            GetProcessWnd();
         }
-    }
-
-    //这里可以添加自己想要的信息处理 
-    private int KeyBoardHookProc(int nCode, int wParam, IntPtr lParam)
-    {
-        if (nCode >= 0)
-        {
-            KeyBoardHookStruct kbh = (KeyBoardHookStruct)Marshal.PtrToStructure(lParam, typeof(KeyBoardHookStruct));
-
-            if (kbh.vkCode == 91) // 截获左win(开始菜单键) 
-            {
-                return 1;
-            }
-
-            if (kbh.vkCode == 92)// 截获右win 
-            {
-                return 1;
-            }
-
-        }
-
-        return CallNextHookEx(hHook, nCode, wParam, lParam);
-    }
-
-    /// <summary>
-    /// 安装键盘钩子 
-    /// </summary>
-    public void Hook()
-    {
-        if (hHook == 0)
-        {
-            KeyBoardHookProcedure = new HookProc(KeyBoardHookProc);
-            hHook = SetWindowsHookEx(WH_KEYBOARD_LL, KeyBoardHookProcedure, wallPaper, 0);
-            //如果设置钩子失败. 
-            if (hHook == 0)
-            {
-                Hook_Clear();
-            }
-        }
-    }
-
-    //取消钩子事件 
-    public static void Hook_Clear()
-    {
-        bool retKeyboard = true;
-        if (hHook != 0)
-        {
-            retKeyboard = UnhookWindowsHookEx(hHook);
-            hHook = 0;
-        }
-        //如果去掉钩子失败. 
-        if (!retKeyboard)
-        {
-            UnityEngine.Debug.Log("UnhookWindowsHookEx failed.");
-        }
-    }
-
-    // Use this for initialization
-    void Start()
-    {
-
     }
 
     // Update is called once per frame
@@ -184,14 +92,14 @@ public class WallPaper : MonoBehaviour
     {
         if (Application.platform == RuntimePlatform.WindowsPlayer)
         {
-            t.text += " focus:" + focus;
+            t.text = Time.time.ToString();
             if (focus)
             {
-                //Hook(); 
+
             }
             else
             {
-                //Hook_Clear();
+
             }
         }
 
@@ -223,15 +131,5 @@ public class WallPaper : MonoBehaviour
         }), pid);
         return (!bResult && Marshal.GetLastWin32Error() == 0) ? ptrWnd : IntPtr.Zero;
     }
-
-    public delegate bool WNDENUMPROC(IntPtr hwnd, uint lParam);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern bool EnumWindows(WNDENUMPROC lpEnumFunc, uint lParam);
-    [DllImport("user32.dll", SetLastError = true)]
-    public static extern IntPtr GetParent(IntPtr hWnd);
-    [DllImport("user32.dll")]
-    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, ref uint lpdwProcessId);
-    [DllImport("kernel32.dll")]
-    public static extern void SetLastError(uint dwErrCode);
-
+      
 }
