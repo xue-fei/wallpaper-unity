@@ -5,7 +5,7 @@ using UnityEngine;
 using UnityEngine.UI;
 
 public class WallPaper : MonoBehaviour
-{ 
+{
     [DllImport("user32.dll")]
     static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
@@ -52,7 +52,7 @@ public class WallPaper : MonoBehaviour
     {
         ResWidth = Screen.width;
         ResHeight = Screen.height;
-        //Screen.SetResolution(ResWidth, ResHeight, true, 30);
+        Screen.SetResolution(ResWidth, ResHeight, true, 30);
 
         if (Application.platform == RuntimePlatform.WindowsPlayer)
         {
@@ -82,17 +82,21 @@ public class WallPaper : MonoBehaviour
         }
     }
 
+    private void Awake()
+    {
+        Log.Init(true, Application.persistentDataPath);
+    }
+
     // Update is called once per frame
     void Update()
     {
-
+        t.text = Time.time.ToString();
     }
 
     private void OnApplicationFocus(bool focus)
     {
         if (Application.platform == RuntimePlatform.WindowsPlayer)
         {
-            t.text = Time.time.ToString();
             if (focus)
             {
 
@@ -103,6 +107,11 @@ public class WallPaper : MonoBehaviour
             }
         }
 
+    }
+
+    private void OnApplicationQuit()
+    {
+        SetParent(wallPaper, IntPtr.Zero);
     }
 
     public static IntPtr GetProcessWnd()
@@ -131,5 +140,46 @@ public class WallPaper : MonoBehaviour
         }), pid);
         return (!bResult && Marshal.GetLastWin32Error() == 0) ? ptrWnd : IntPtr.Zero;
     }
-      
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow(); //获得本窗体的句柄 
+    [DllImport("user32.dll")]
+    public static extern bool SetForegroundWindow(IntPtr hWnd); //设置此窗体为活动窗体
+
+    public Material m;
+
+    void OnGUI()
+    {
+        if (Event.current.isMouse && Event.current.type == EventType.MouseDown && Event.current.clickCount == 2)
+        {
+            Log.Debug("ni shuang ji");
+            Process process = new Process();
+            process.StartInfo.FileName = "C:/Program Files/Unity/Editor/Unity.exe";
+            process.StartInfo.CreateNoWindow = false;
+            process.StartInfo.UseShellExecute = false;
+            process.StartInfo.WindowStyle = ProcessWindowStyle.Normal;
+            process.Start();
+        }
+    }
+
+    void OnMouseEnter()
+    {
+        if (m.color != Color.blue)
+        {
+            m.color = Color.blue;
+        }
+        if (wallPaper != GetForegroundWindow())
+        {
+            SetForegroundWindow(wallPaper);
+            Log.Debug("获得焦点");
+        }
+    }
+
+    void OnMouseExit()
+    {
+        if (m.color != Color.green)
+        {
+            m.color = Color.green;
+        }
+    }
 }
