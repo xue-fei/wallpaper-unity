@@ -1,12 +1,8 @@
-﻿using System;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
-using System.Text;
-using UnityEngine;
+﻿using UnityEngine;
 
 public class Effect1 : MonoBehaviour
 {
-    
+    public Material m;
     // Use this for initialization
     void Start()
     {
@@ -19,10 +15,19 @@ public class Effect1 : MonoBehaviour
 
     }
 
-    void OnClick()
+    void OnMouseEnter()
     {
-
+        if (m.color != Color.blue)
+        {
+            m.color = Color.blue;
+        }
     }
 
-    
+    void OnMouseExit()
+    {
+        if (m.color != Color.green)
+        {
+            m.color = Color.green;
+        }
+    }
 }
