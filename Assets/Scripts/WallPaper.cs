@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 using UnityEngine;
@@ -93,6 +93,8 @@ public class WallPaper : MonoBehaviour
 
     private void exit_Click(object sender, EventArgs e)
     {
+        notifyIcon.Dispose();
+        DestroyWindow(wallPaper);
         UnityEngine.Application.Quit();
     }
 
@@ -147,7 +149,7 @@ public class WallPaper : MonoBehaviour
 
     private void OnApplicationQuit()
     {
-        SetParent(wallPaper, IntPtr.Zero);
+         
     }
 
     #region
@@ -191,5 +193,8 @@ public class WallPaper : MonoBehaviour
     /// <returns></returns>
     [DllImport("user32.dll", EntryPoint = "SetWindowText", CharSet = CharSet.Ansi)]
     public static extern int SetWindowText(int hwnd, string lpString);
+
+    [DllImport("user32.dll")]
+    static extern bool DestroyWindow(IntPtr hWnd);
     #endregion
 }
