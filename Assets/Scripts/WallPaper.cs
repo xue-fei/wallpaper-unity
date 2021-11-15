@@ -22,7 +22,7 @@ public class WallPaper : MonoBehaviour
     IntPtr progman;
     IntPtr result;
 
-    void Main()
+    void Awake()
     { 
         ResWidth = UnityEngine.Screen.width;
         ResHeight = UnityEngine.Screen.height;
