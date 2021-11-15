@@ -38,22 +38,22 @@ public class WallPaper : MonoBehaviour
 
             // 向 Program Manager 窗口发送 0x52c 的一个消息，超时设置为0x3e8（1秒）。
             SendMessageTimeout(progman, 0x52c, IntPtr.Zero, IntPtr.Zero, 0, 0x3e8, result);
-
+            IntPtr workerw = IntPtr.Zero;
             EnumWindows((hwnd, lParam) =>
             {
                 // 找到包含 SHELLDLL_DefView 这个窗口句柄的 WorkerW
                 if (FindWindowEx(hwnd, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero)
                 {
                     // 找到当前 WorkerW 窗口的，后一个 WorkerW 窗口。 
-                    IntPtr tempHwnd = FindWindowEx(IntPtr.Zero, hwnd, "WorkerW", null);
+                    workerw = FindWindowEx(IntPtr.Zero, hwnd, "WorkerW", null);
 
                     // 隐藏这个窗口
-                    ShowWindow(tempHwnd, 0);
+                    //ShowWindow(tempHwnd, 0);
                 }
                 return true;
             }, IntPtr.Zero);
 
-            SetParent(wallPaper, progman);
+            SetParent(wallPaper, workerw);
         }
     }
 
