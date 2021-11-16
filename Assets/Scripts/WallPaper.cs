@@ -21,7 +21,7 @@ public class WallPaper : MonoBehaviour
     IntPtr wallPaper;
     IntPtr progman;
     IntPtr result;
-
+    bool isFocus;
     void Awake()
     { 
         ResWidth = UnityEngine.Screen.width;
@@ -116,6 +116,10 @@ public class WallPaper : MonoBehaviour
     void Update()
     {
         t.text = Time.time.ToString();
+        if(!isFocus)
+        {
+            SetFocus(wallPaper);
+        }
     }
 
     void OnGUI()
@@ -136,6 +140,7 @@ public class WallPaper : MonoBehaviour
     {
         if (UnityEngine.Application.platform == RuntimePlatform.WindowsPlayer)
         {
+            isFocus = focus;
             if (focus)
             {
 
@@ -196,5 +201,8 @@ public class WallPaper : MonoBehaviour
 
     [DllImport("user32.dll")]
     static extern bool DestroyWindow(IntPtr hWnd);
+    
+    [DllImport("user32.dll")]
+    static extern IntPtr SetFocus(IntPtr hWnd);
     #endregion
 }
