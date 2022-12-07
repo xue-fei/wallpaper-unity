@@ -1,10 +1,10 @@
 using System;
-using System.Diagnostics;
-using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.UI;
 using System.Windows.Forms;
 using System.Drawing;
+using Button = UnityEngine.UI.Button;
+using Debug = UnityEngine.Debug;
 
 public class WallPaper : MonoBehaviour
 {
@@ -12,9 +12,7 @@ public class WallPaper : MonoBehaviour
     NotifyIcon notifyIcon = new NotifyIcon();
     //托盘图标的宽高
     int _width = 50, _height = 50;
-
     public Text t;
-
     public int ResWidth;//窗口宽度
     public int ResHeight;//窗口高度
 
@@ -22,30 +20,41 @@ public class WallPaper : MonoBehaviour
     IntPtr progman;
     IntPtr result;
     bool isFocus;
+    MouseHook mouseHook;
+
+    public Button button;
+
     void Awake()
-    { 
+    {
+        button.onClick.AddListener(OnClick);
         ResWidth = UnityEngine.Screen.width;
         ResHeight = UnityEngine.Screen.height;
         UnityEngine.Screen.SetResolution(ResWidth, ResHeight, true, 30);
+        UnityEngine.Application.targetFrameRate = 30;
+
+        //mouseHook = new MouseHook();
+        //mouseHook.OnMouseActivity += OnMouseActivity;
+        //mouseHook.Start();
+
         //注释掉这一行，编辑器程序就会变成桌面背景
         if (UnityEngine.Application.platform == RuntimePlatform.WindowsPlayer)
         {
-            wallPaper = GetForegroundWindow();
-            SetWindowText(wallPaper.ToInt32(), UnityEngine.Application.productName);
-            progman = FindWindow("Progman", null);
+            wallPaper = User32.GetForegroundWindow();
+            User32.SetWindowText(wallPaper.ToInt32(), UnityEngine.Application.productName);
+            progman = User32.FindWindow("Progman", null);
 
             result = IntPtr.Zero;
 
             // 向 Program Manager 窗口发送 0x52c 的一个消息，超时设置为0x3e8（1秒）。
-            SendMessageTimeout(progman, 0x52c, IntPtr.Zero, IntPtr.Zero, 0, 0x3e8, result);
+            User32.SendMessageTimeout(progman, 0x52c, IntPtr.Zero, IntPtr.Zero, 0, 0x3e8, result);
             IntPtr workerw = IntPtr.Zero;
-            EnumWindows((hwnd, lParam) =>
+            User32.EnumWindows((hwnd, lParam) =>
             {
                 // 找到包含 SHELLDLL_DefView 这个窗口句柄的 WorkerW
-                if (FindWindowEx(hwnd, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero)
+                if (User32.FindWindowEx(hwnd, IntPtr.Zero, "SHELLDLL_DefView", null) != IntPtr.Zero)
                 {
                     // 找到当前 WorkerW 窗口的，后一个 WorkerW 窗口。 
-                    workerw = FindWindowEx(IntPtr.Zero, hwnd, "WorkerW", null);
+                    workerw = User32.FindWindowEx(IntPtr.Zero, hwnd, "WorkerW", null);
 
                     // 隐藏这个窗口
                     //ShowWindow(tempHwnd, 0);
@@ -53,13 +62,18 @@ public class WallPaper : MonoBehaviour
                 return true;
             }, IntPtr.Zero);
 
-            SetParent(wallPaper, workerw);
+            User32.SetParent(wallPaper, workerw);
         }
     }
 
     private void Start()
     {
         InitTray();
+    }
+
+    void OnClick()
+    {
+        Debug.LogWarning("OnClick");
     }
 
     public void InitTray()
@@ -94,7 +108,7 @@ public class WallPaper : MonoBehaviour
     private void exit_Click(object sender, EventArgs e)
     {
         notifyIcon.Dispose();
-        DestroyWindow(wallPaper);
+        User32.DestroyWindow(wallPaper);
         UnityEngine.Application.Quit();
     }
 
@@ -116,93 +130,31 @@ public class WallPaper : MonoBehaviour
     void Update()
     {
         t.text = Time.time.ToString();
-        if(!isFocus)
+        if (!isFocus)
         {
-            SetFocus(wallPaper);
+            //User32.SetFocus(wallPaper);
         }
     }
 
-    void OnGUI()
+    void OnMouseActivity(object sender, MouseEventArgs e)
     {
-        if (Event.current.isMouse && Event.current.type == EventType.MouseDown && Event.current.clickCount == 2)
+        MouseSimulater.MoveTo(e.X, e.Y);
+        if (e.Button == MouseButtons.Left)
         {
-            UnityEngine.Debug.Log("ni shuang ji");
-            Process process = new Process();
-            process.StartInfo.FileName = "C:/Program Files/Unity/Editor/Unity.exe";
-            process.StartInfo.CreateNoWindow = false;
-            process.StartInfo.UseShellExecute = false;
-            process.StartInfo.WindowStyle = ProcessWindowStyle.Normal;
-            process.Start();
+            MouseSimulater.LeftClick(e.X, e.Y);
         }
-    }
-
-    private void OnApplicationFocus(bool focus)
-    {
-        if (UnityEngine.Application.platform == RuntimePlatform.WindowsPlayer)
+        else if (e.Button == MouseButtons.Right)
         {
-            isFocus = focus;
-            if (focus)
-            {
+            MouseSimulater.RightClick(e.X, e.Y);
+        }
+        else
+        {
 
-            }
-            else
-            {
-
-            }
         }
     }
 
     private void OnApplicationQuit()
     {
-         
+        //mouseHook.Stop();
     }
-
-    #region
-    [DllImport("user32.dll")]
-    static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string className, string winName);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr SetParent(IntPtr hwnd, IntPtr parentHwnd);
-
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    public static extern int ShowWindow(IntPtr hwnd, int nCmdShow);
-
-    [DllImport("user32.dll")]
-    public static extern bool EnumWindows(EnumWindowsProc proc, IntPtr lParam);
-    public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr SendMessageTimeout(IntPtr hwnd,
-        uint msg,
-        IntPtr wParam,
-        IntPtr lParam,
-        uint fuFlage,
-        uint timeout,
-        IntPtr result);
-
-    /// <summary>
-    /// 获得本窗体的句柄  
-    /// </summary>
-    /// <returns></returns>
-    [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
-
-    /// <summary>
-    /// 设置窗口名
-    /// </summary>
-    /// <param name="hwnd"></param>
-    /// <param name="lpString"></param>
-    /// <returns></returns>
-    [DllImport("user32.dll", EntryPoint = "SetWindowText", CharSet = CharSet.Ansi)]
-    public static extern int SetWindowText(int hwnd, string lpString);
-
-    [DllImport("user32.dll")]
-    static extern bool DestroyWindow(IntPtr hWnd);
-    
-    [DllImport("user32.dll")]
-    static extern IntPtr SetFocus(IntPtr hWnd);
-    #endregion
 }

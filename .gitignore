@@ -5,3 +5,8 @@ WallPaper.sln
 Library/
 Temp/
 WallPaper.Plugins.csproj
+.vsconfig
+Logs/
+obj/
+Assembly-CSharp.csproj
+Assembly-CSharp-Editor.csproj
