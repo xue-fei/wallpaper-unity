@@ -1,9 +1,9 @@
-using System;
+ï»¿using System;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
 /// <summary>
-/// Êó±êÈ«¾Ö¹³×Ó
+/// é¼ æ ‡å…¨å±€é’©å­
 /// </summary>
 public class MouseHook
 {
@@ -19,7 +19,7 @@ public class MouseHook
     private const int WM_MBUTTONDBLCLK = 0x209;
 
     /// <summary>
-    /// µã
+    /// ç‚¹
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public class POINT
@@ -29,7 +29,7 @@ public class MouseHook
     }
 
     /// <summary>
-    /// ¹³×Ó½á¹¹Ìå
+    /// é’©å­ç»“æ„ä½“
     /// </summary>
     [StructLayout(LayoutKind.Sequential)]
     public class MouseHookStruct
@@ -42,30 +42,30 @@ public class MouseHook
 
     public const int WH_MOUSE_LL = 14; // mouse hook constant
 
-    // ×°ÖÃ¹³×ÓµÄº¯Êı
+    // è£…ç½®é’©å­çš„å‡½æ•°
     [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
     public static extern int SetWindowsHookEx(int idHook, HookProc lpfn, IntPtr hInstance, int threadId);
 
-    // Ğ¶ÏÂ¹³×ÓµÄº¯Êı
+    // å¸ä¸‹é’©å­çš„å‡½æ•°
     [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
     public static extern bool UnhookWindowsHookEx(int idHook);
 
-    // ÏÂÒ»¸ö¹³¹ÒµÄº¯Êı
+    // ä¸‹ä¸€ä¸ªé’©æŒ‚çš„å‡½æ•°
     [DllImport("user32.dll", CharSet = CharSet.Auto, CallingConvention = CallingConvention.StdCall)]
     public static extern int CallNextHookEx(int idHook, int nCode, Int32 wParam, IntPtr lParam);
 
-    // È«¾ÖµÄÊó±êÊÂ¼ş
+    // å…¨å±€çš„é¼ æ ‡äº‹ä»¶
     public event MouseEventHandler OnMouseActivity;
 
-    // ¹³×Ó»Øµ÷º¯Êı
+    // é’©å­å›è°ƒå‡½æ•°
     public delegate int HookProc(int nCode, Int32 wParam, IntPtr lParam);
 
-    // ÉùÃ÷Êó±ê¹³×ÓÊÂ¼şÀàĞÍ
+    // å£°æ˜é¼ æ ‡é’©å­äº‹ä»¶ç±»å‹
     private HookProc _mouseHookProcedure;
-    private static int _hMouseHook = 0; // Êó±ê¹³×Ó¾ä±ú
+    private static int _hMouseHook = 0; // é¼ æ ‡é’©å­å¥æŸ„
 
     /// <summary>
-    /// ¹¹Ôìº¯Êı
+    /// æ„é€ å‡½æ•°
     /// </summary>
     public MouseHook()
     {
@@ -73,7 +73,7 @@ public class MouseHook
     }
 
     /// <summary>
-    /// Îö¹¹º¯Êı
+    /// ææ„å‡½æ•°
     /// </summary>
     ~MouseHook()
     {
@@ -81,19 +81,19 @@ public class MouseHook
     }
 
     /// <summary>
-    /// Æô¶¯È«¾Ö¹³×Ó
+    /// å¯åŠ¨å…¨å±€é’©å­
     /// </summary>
     public void Start()
     {
-        // °²×°Êó±ê¹³×Ó
+        // å®‰è£…é¼ æ ‡é’©å­
         if (_hMouseHook == 0)
         {
-            // Éú³ÉÒ»¸öHookProcµÄÊµÀı.
+            // ç”Ÿæˆä¸€ä¸ªHookProcçš„å®ä¾‹.
             _mouseHookProcedure = new HookProc(MouseHookProc);
             IntPtr user32 = User32.LoadLibrary("user32.dll");
             _hMouseHook = SetWindowsHookEx(WH_MOUSE_LL, _mouseHookProcedure, user32, 0);
 
-            //¼ÙÉè×°ÖÃÊ§°ÜÍ£Ö¹¹³×Ó
+            //å‡è®¾è£…ç½®å¤±è´¥åœæ­¢é’©å­
             if (_hMouseHook == 0)
             {
                 Stop();
@@ -103,7 +103,7 @@ public class MouseHook
     }
 
     /// <summary>
-    /// Í£Ö¹È«¾Ö¹³×Ó
+    /// åœæ­¢å…¨å±€é’©å­
     /// </summary>
     public void Stop()
     {
@@ -115,17 +115,17 @@ public class MouseHook
             _hMouseHook = 0;
         }
 
-        // ¼ÙÉèĞ¶ÏÂ¹³×ÓÊ§°Ü
+        // å‡è®¾å¸ä¸‹é’©å­å¤±è´¥
         if (!(retMouse))
             throw new Exception("UnhookWindowsHookEx failed.");
     }
 
     /// <summary>
-    /// Êó±ê¹³×Ó»Øµ÷º¯Êı
+    /// é¼ æ ‡é’©å­å›è°ƒå‡½æ•°
     /// </summary>
     private int MouseHookProc(int nCode, Int32 wParam, IntPtr lParam)
     {
-        // ¼ÙÉèÕı³£Ö´ĞĞ¶øÇÒÓÃ»§Òª¼àÌıÊó±êµÄÏûÏ¢
+        // å‡è®¾æ­£å¸¸æ‰§è¡Œè€Œä¸”ç”¨æˆ·è¦ç›‘å¬é¼ æ ‡çš„æ¶ˆæ¯
         if ((nCode >= 0) && (OnMouseActivity != null))
         {
             MouseButtons button = MouseButtons.None;
@@ -159,12 +159,12 @@ public class MouseHook
                     break;
             }
 
-            // ´Ó»Øµ÷º¯ÊıÖĞµÃµ½Êó±êµÄĞÅÏ¢
+            // ä»å›è°ƒå‡½æ•°ä¸­å¾—åˆ°é¼ æ ‡çš„ä¿¡æ¯
             MouseHookStruct MyMouseHookStruct = (MouseHookStruct)Marshal.PtrToStructure(lParam, typeof(MouseHookStruct));
             MouseEventArgs e = new MouseEventArgs(button, clickCount, MyMouseHookStruct.pt.x, MyMouseHookStruct.pt.y, 0);
 
-            // ¼ÙÉèÏëÒªÏŞÖÆÊó±êÔÚÆÁÄ»ÖĞµÄÒÆ¶¯ÇøÓòÄÜ¹»ÔÚ´Ë´¦ÉèÖÃ
-            // ºóÆÚĞëÒª¿¼ÂÇÊµ¼ÊµÄx¡¢yµÄÈİ²î
+            // å‡è®¾æƒ³è¦é™åˆ¶é¼ æ ‡åœ¨å±å¹•ä¸­çš„ç§»åŠ¨åŒºåŸŸèƒ½å¤Ÿåœ¨æ­¤å¤„è®¾ç½®
+            // åæœŸé¡»è¦è€ƒè™‘å®é™…çš„xã€yçš„å®¹å·®
             if (!System.Windows.Forms.Screen.PrimaryScreen.Bounds.Contains(e.X, e.Y))
             {
                 //return 1;
@@ -173,7 +173,7 @@ public class MouseHook
             OnMouseActivity(this, e);
         }
 
-        // Æô¶¯ÏÂÒ»´Î¹³×Ó
+        // å¯åŠ¨ä¸‹ä¸€æ¬¡é’©å­
         return CallNextHookEx(_hMouseHook, nCode, wParam, lParam);
     }
 }
