@@ -1,8 +1,8 @@
-using System; 
-using System.Runtime.InteropServices; 
+using System;
+using System.Runtime.InteropServices;
 
-public class User32 
-{ 
+public class User32
+{
     [DllImport("kernel32.dll")]
     public extern static IntPtr LoadLibrary(string path);
 
@@ -32,14 +32,14 @@ public class User32
         IntPtr result);
 
     /// <summary>
-    /// »ñµÃ±¾´°ÌåµÄ¾ä±ú  
+    /// è·å¾—æœ¬çª—ä½“çš„å¥æŸ„  
     /// </summary>
     /// <returns></returns>
     [DllImport("user32.dll")]
     public static extern IntPtr GetForegroundWindow();
 
     /// <summary>
-    /// ÉèÖÃ´°¿ÚÃû
+    /// è®¾ç½®çª—å£å
     /// </summary>
     /// <param name="hwnd"></param>
     /// <param name="lpString"></param>
@@ -52,4 +52,7 @@ public class User32
 
     [DllImport("user32.dll")]
     public static extern IntPtr SetFocus(IntPtr hWnd);
+
+    [DllImport("user32.dll", CharSet = CharSet.Auto)]
+    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
 }

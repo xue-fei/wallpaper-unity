@@ -8,7 +8,7 @@ public class MouseSimulater
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern void mouse_event(MouseEventFlag dwFlags, int dx, int dy, uint dwData, UIntPtr dwExtraInfo);
 
-    // ·½·¨²ÎÊıËµÃ÷
+    // æ–¹æ³•å‚æ•°è¯´æ˜
     // VOID mouse_event(
     //     DWORD dwFlags,         // motion and click options
     //     DWORD dx,              // horizontal position or change
@@ -35,11 +35,11 @@ public class MouseSimulater
     }
     #endregion
 
-    // UnityÆÁÄ»×ø±ê´Ó×óÏÂ½Ç¿ªÊ¼£¬ÏòÓÒÎªXÖá£¬ÏòÉÏÎªYÖá
-    // WindowsÆÁÄ»×ø±ê´Ó×óÉÏ½Ç¿ªÊ¼£¬ÏòÓÒÎªXÖá£¬ÏòÏÂÎªYÖá
+    // Unityå±å¹•åæ ‡ä»å·¦ä¸‹è§’å¼€å§‹ï¼Œå‘å³ä¸ºXè½´ï¼Œå‘ä¸Šä¸ºYè½´
+    // Windowså±å¹•åæ ‡ä»å·¦ä¸Šè§’å¼€å§‹ï¼Œå‘å³ä¸ºXè½´ï¼Œå‘ä¸‹ä¸ºYè½´
 
     /// <summary>
-    /// ÒÆ¶¯Êó±êµ½Ö¸¶¨Î»ÖÃ£¨Ê¹ÓÃUnityÆÁÄ»×ø±ê¶ø²»ÊÇWindowsÆÁÄ»×ø±ê£©
+    /// ç§»åŠ¨é¼ æ ‡åˆ°æŒ‡å®šä½ç½®ï¼ˆä½¿ç”¨Unityå±å¹•åæ ‡è€Œä¸æ˜¯Windowså±å¹•åæ ‡ï¼‰
     /// </summary>
     public static bool MoveTo(float x, float y)
     {
@@ -48,7 +48,7 @@ public class MouseSimulater
 
         if (!UnityEngine.Screen.fullScreen)
         {
-            UnityEngine.Debug.LogError("Ö»ÄÜÔÚÈ«ÆÁ×´Ì¬ÏÂÊ¹ÓÃ£¡");
+            UnityEngine.Debug.LogError("åªèƒ½åœ¨å…¨å±çŠ¶æ€ä¸‹ä½¿ç”¨ï¼");
             return false;
         }
 
@@ -56,7 +56,7 @@ public class MouseSimulater
         return true;
     }
 
-    // ×ó¼üµ¥»÷
+    // å·¦é”®å•å‡»
     public static void LeftClick(float x = -1, float y = -1)
     {
         if (MoveTo(x, y))
@@ -66,7 +66,7 @@ public class MouseSimulater
         }
     }
 
-    // ÓÒ¼üµ¥»÷
+    // å³é”®å•å‡»
     public static void RightClick(float x = -1, float y = -1)
     {
         if (MoveTo(x, y))
@@ -76,7 +76,7 @@ public class MouseSimulater
         }
     }
 
-    // ÖĞ¼üµ¥»÷
+    // ä¸­é”®å•å‡»
     public static void MiddleClick(float x = -1, float y = -1)
     {
         if (MoveTo(x, y))
@@ -86,7 +86,7 @@ public class MouseSimulater
         }
     }
 
-    // ×ó¼ü°´ÏÂ
+    // å·¦é”®æŒ‰ä¸‹
     public static void LeftDown(float x = -1, float y = -1)
     {
         if (MoveTo(x, y))
@@ -95,7 +95,7 @@ public class MouseSimulater
         }
     }
 
-    // ×ó¼üÌ§Æğ
+    // å·¦é”®æŠ¬èµ·
     public static void LeftUp(float x = -1, float y = -1)
     {
         if (MoveTo(x, y))
@@ -104,7 +104,7 @@ public class MouseSimulater
         }
     }
 
-    // ÓÒ¼ü°´ÏÂ
+    // å³é”®æŒ‰ä¸‹
     public static void RightDown(float x = -1, float y = -1)
     {
         if (MoveTo(x, y))
@@ -113,7 +113,7 @@ public class MouseSimulater
         }
     }
 
-    // ÓÒ¼üÌ§Æğ
+    // å³é”®æŠ¬èµ·
     public static void RightUp(float x = -1, float y = -1)
     {
         if (MoveTo(x, y))
@@ -122,7 +122,7 @@ public class MouseSimulater
         }
     }
 
-    // ÖĞ¼ü°´ÏÂ
+    // ä¸­é”®æŒ‰ä¸‹
     public static void MiddleDown(float x = -1, float y = -1)
     {
         if (MoveTo(x, y))
@@ -131,7 +131,7 @@ public class MouseSimulater
         }
     }
 
-    // ÖĞ¼üÌ§Æğ
+    // ä¸­é”®æŠ¬èµ·
     public static void MiddleUp(float x = -1, float y = -1)
     {
         if (MoveTo(x, y))
@@ -140,7 +140,7 @@ public class MouseSimulater
         }
     }
 
-    // ¹öÂÖ¹ö¶¯
+    // æ»šè½®æ»šåŠ¨
     public static void ScrollWheel(float value)
     {
         mouse_event(MouseEventFlag.Wheel, 0, 0, (uint)value, UIntPtr.Zero);
