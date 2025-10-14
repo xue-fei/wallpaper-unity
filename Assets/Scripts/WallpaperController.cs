@@ -92,11 +92,21 @@ public class WallpaperController : MonoBehaviour
     // 3. Unity Start 方法 (核心逻辑)
     // ====================================================================================
 
+    int width = 2720;
+    int height = 1080;
+
     void Start()
-    {
-#if UNITY_STANDALONE_WIN
+    { 
+        Screen.SetResolution(width, height, false);
         // 1. 获取 Unity 窗口句柄
         unityWindow = GetActiveWindow();
+        Invoke("SetWallPaper", 2f);
+    }
+
+    void SetWallPaper()
+    {
+#if UNITY_STANDALONE_WIN
+        
         if (unityWindow == IntPtr.Zero)
         {
             Debug.LogError("无法获取 Unity 窗口句柄");
@@ -147,8 +157,8 @@ public class WallpaperController : MonoBehaviour
 
         // 4. 设置窗口样式：分层 + 不激活
         // WS_EX_NOACTIVATE 确保 Unity 窗口不会抢夺焦点，这是避免 Z-order 混乱的关键。
-        int exStyle = GetWindowLong(unityWindow, GWL_EXSTYLE);
-        SetWindowLong(unityWindow, GWL_EXSTYLE, exStyle | WS_EX_LAYERED | WS_EX_NOACTIVATE);
+        int exStyle = GetWindowLong(unityWindow, GWL_EXSTYLE); //| WS_EX_LAYERED | WS_EX_NOACTIVATE
+        SetWindowLong(unityWindow, GWL_EXSTYLE, exStyle );
         // 必须设为不透明 (255)，否则可能导致图标背景变成黑色或透明
         SetLayeredWindowAttributes(unityWindow, 0, 255, LWA_ALPHA);
 
@@ -158,7 +168,7 @@ public class WallpaperController : MonoBehaviour
         // 6. 设置 Unity 窗口大小和 Z-Order
         // 将 Unity 窗口置于 WorkerW 子窗口的 **最底层 (HWND_BOTTOM)**
         // 这样可以确保它在桌面图标（SHELLDLL_DefView）之下。
-        SetWindowPos(unityWindow, HWND_BOTTOM, 0, 0, Screen.width, Screen.height, SWP_NOACTIVATE);
+        SetWindowPos(unityWindow, HWND_BOTTOM, 0, 0, width, height, SWP_NOACTIVATE);
 
         // 7. 查找 SHELLDLL_DefView（桌面图标容器）
         // 这一步现在是可选的，因为我们依赖 SetParent/HWND_BOTTOM 的组合。
@@ -205,6 +215,4 @@ public class WallpaperController : MonoBehaviour
         }
 #endif
     }
-
-    // 移除手动提升图标的 Update 逻辑（因为 Start 中已处理）
 }
