@@ -3,7 +3,6 @@ using System.Drawing;
 using System.Text;
 using System.Windows.Forms;
 using UnityEngine;
-using Screen = UnityEngine.Screen;
 
 public class WallpaperController : MonoBehaviour
 {
@@ -52,7 +51,15 @@ public class WallpaperController : MonoBehaviour
 
     void Start()
     {
-        Screen.SetResolution(width, height, false);
+        // 虚拟屏幕的总边界（包含所有显示器的最小矩形）
+        Rectangle virtualBounds = SystemInformation.VirtualScreen;
+
+        Debug.Log($"虚拟屏幕尺寸: {virtualBounds.Width} x {virtualBounds.Height}");
+        Debug.Log($"虚拟屏幕原点: ({virtualBounds.X}, {virtualBounds.Y})");
+        width = virtualBounds.Width;
+        height = virtualBounds.Height;
+
+        UnityEngine.Screen.SetResolution(width, height, false);
         // 1. 获取 Unity 窗口句柄
         unityWindow = User32.GetActiveWindow();
         Invoke("SetWallPaper", 0.1f);
