@@ -1,10 +1,18 @@
 using System;
+using System.Drawing;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Windows.Forms;
 using UnityEngine;
+using Screen = UnityEngine.Screen;
 
 public class WallpaperController : MonoBehaviour
 {
+    //NotifyIcon 设置托盘相关参数
+    NotifyIcon notifyIcon = new NotifyIcon();
+    //托盘图标的宽高
+    int _width = 50, _height = 50;
+
     // ====================================================================================
     // 1. P/Invoke 声明 (Windows API)
     // ====================================================================================
@@ -99,17 +107,18 @@ public class WallpaperController : MonoBehaviour
     int height = 1080;
 
     void Start()
-    { 
+    {
         Screen.SetResolution(width, height, false);
         // 1. 获取 Unity 窗口句柄
         unityWindow = GetActiveWindow();
-        Invoke("SetWallPaper", 2f);
+        Invoke("SetWallPaper", 0.1f);
+        InitTray();
     }
 
     void SetWallPaper()
     {
 #if UNITY_STANDALONE_WIN
-        
+
         if (unityWindow == IntPtr.Zero)
         {
             Debug.LogError("无法获取 Unity 窗口句柄");
@@ -161,7 +170,7 @@ public class WallpaperController : MonoBehaviour
         // 4. 设置窗口样式：分层 + 不激活
         // WS_EX_NOACTIVATE 确保 Unity 窗口不会抢夺焦点，这是避免 Z-order 混乱的关键。
         int exStyle = GetWindowLong(unityWindow, GWL_EXSTYLE); //| WS_EX_LAYERED | WS_EX_NOACTIVATE
-        SetWindowLong(unityWindow, GWL_EXSTYLE, exStyle );
+        SetWindowLong(unityWindow, GWL_EXSTYLE, exStyle);
         int style = GetWindowLong(unityWindow, GWL_STYLE);
         SetWindowLong(unityWindow, GWL_STYLE, WS_POPUP);
         // 必须设为不透明 (255)，否则可能导致图标背景变成黑色或透明
@@ -219,5 +228,55 @@ public class WallpaperController : MonoBehaviour
             ShowWindow(tray, SW_SHOW);
         }
 #endif
+    }
+
+    public void InitTray()
+    {
+        //托盘气泡显示内容
+        notifyIcon.BalloonTipText = "Unity壁纸程序已启动";
+        notifyIcon.Text = "Unity壁纸程序";
+        //托盘按钮是否可见 
+        notifyIcon.Visible = true;
+        notifyIcon.Icon = SetTrayIcon(@UnityEngine.Application.streamingAssetsPath + "/icon.png", _width, _height);
+        //托盘气泡显示时间
+        notifyIcon.ShowBalloonTip(2000);
+
+        MenuItem help = new MenuItem("帮助");
+        help.Click += new EventHandler(help_Click);
+        MenuItem exit = new MenuItem("关闭");
+        exit.Click += new EventHandler(exit_Click);
+        MenuItem[] childen = new MenuItem[] { help, exit };
+        notifyIcon.ContextMenu = new System.Windows.Forms.ContextMenu(childen);
+    }
+
+    /// <summary>  
+    /// 帮助选项  
+    /// </summary>  
+    /// <param name="sender"></param>  
+    /// <param name="e"></param>  
+    private void help_Click(object sender, EventArgs e)
+    {
+        UnityEngine.Application.OpenURL("https://blog.csdn.net/AWNUXCVBN");
+    }
+
+    private void exit_Click(object sender, EventArgs e)
+    {
+        notifyIcon.Dispose();
+        User32.DestroyWindow(unityWindow);
+        UnityEngine.Application.Quit();
+    }
+
+    /// <summary>
+    /// 设置程序托盘图标
+    /// </summary>
+    /// <param name="iconPath">图标路径</param>
+    /// <param name="width">宽</param>
+    /// <param name="height">高</param>
+    /// <returns>图标</returns>
+    private Icon SetTrayIcon(string iconPath, int width, int height)
+    {
+        Bitmap bt = new Bitmap(iconPath);
+        Bitmap fitSizeBt = new Bitmap(bt, width, height);
+        return Icon.FromHandle(fitSizeBt.GetHicon());
     }
 }
