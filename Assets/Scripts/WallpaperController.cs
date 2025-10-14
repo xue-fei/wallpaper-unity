@@ -1,16 +1,11 @@
+using AOT;
 using System;
-using System.Drawing;
+using System.Runtime.InteropServices;
 using System.Text;
-using System.Windows.Forms;
 using UnityEngine;
 
 public class WallpaperController : MonoBehaviour
 {
-    //NotifyIcon 设置托盘相关参数
-    NotifyIcon notifyIcon = new NotifyIcon();
-    //托盘图标的宽高
-    int _width = 50, _height = 50;
-
     // ====================================================================================
     // 2. 常量定义
     // ====================================================================================
@@ -42,6 +37,13 @@ public class WallpaperController : MonoBehaviour
     private static IntPtr foundWorkerW = IntPtr.Zero;
     private static IntPtr foundDefView = IntPtr.Zero; // 桌面图标容器
 
+    // 新增：用于保持对象引用的 GCHandle
+    private GCHandle gcHandle;
+    // 新增：静态委托，符合 EnumChildProc 签名
+    private static User32.EnumChildProc staticEnumChildProc = StaticEnumChildWindowsCallback;
+
+    private static User32.EnumChildProc staticEnumChildProc2 = StaticEnumWorkerWCallback;
+
     // ====================================================================================
     // 3. Unity Start 方法 (核心逻辑)
     // ====================================================================================
@@ -51,19 +53,12 @@ public class WallpaperController : MonoBehaviour
 
     void Start()
     {
-        // 虚拟屏幕的总边界（包含所有显示器的最小矩形）
-        Rectangle virtualBounds = SystemInformation.VirtualScreen;
-
-        Debug.Log($"虚拟屏幕尺寸: {virtualBounds.Width} x {virtualBounds.Height}");
-        Debug.Log($"虚拟屏幕原点: ({virtualBounds.X}, {virtualBounds.Y})");
-        width = virtualBounds.Width;
-        height = virtualBounds.Height;
+        WinScreenInfo.GetVirtualScreenSize(out width, out height);
 
         UnityEngine.Screen.SetResolution(width, height, false);
         // 1. 获取 Unity 窗口句柄
         unityWindow = User32.GetActiveWindow();
         Invoke("SetWallPaper", 0.1f);
-        InitTray();
     }
 
     void SetWallPaper()
@@ -92,19 +87,7 @@ public class WallpaperController : MonoBehaviour
 
         // 3. 遍历 Progman 的子窗口，寻找 WorkerW (真正的壁纸容器)
         foundWorkerW = IntPtr.Zero;
-        User32.EnumChildWindows(progman, (hwnd, param) =>
-        {
-            var className = new StringBuilder(256);
-            User32.GetClassName(hwnd, className, className.Capacity);
-
-            // 找到 WorkerW 窗口
-            if (className.ToString() == "WorkerW")
-            {
-                // 记录找到的 WorkerW，继续查找以确保找到最新的 WorkerW
-                foundWorkerW = hwnd;
-            }
-            return true;
-        }, IntPtr.Zero);
+        User32.EnumChildWindows(progman, staticEnumChildProc2, IntPtr.Zero);
 
         IntPtr parentWindow = foundWorkerW != IntPtr.Zero ? foundWorkerW : progman;
 
@@ -140,17 +123,7 @@ public class WallpaperController : MonoBehaviour
 
         // 尝试在 Progman 的所有子窗口中查找 DefView
         foundDefView = IntPtr.Zero;
-        User32.EnumChildWindows(progman, (hwnd, param) =>
-        {
-            var className = new StringBuilder(256);
-            User32.GetClassName(hwnd, className, className.Capacity);
-            if (className.ToString() == "SHELLDLL_DefView")
-            {
-                foundDefView = hwnd;
-                return false; // 找到即停
-            }
-            return true;
-        }, IntPtr.Zero);
+        User32.EnumChildWindows(progman, staticEnumChildProc, IntPtr.Zero);
 
         // 8. 强制桌面图标回到顶层 (备用步骤，可能需要也可能不需要)
         if (foundDefView != IntPtr.Zero)
@@ -180,53 +153,31 @@ public class WallpaperController : MonoBehaviour
 #endif
     }
 
-    public void InitTray()
+    [MonoPInvokeCallback(typeof(User32.EnumChildProc))]
+    private static bool StaticEnumWorkerWCallback(IntPtr hwnd, IntPtr lParam)
     {
-        //托盘气泡显示内容
-        notifyIcon.BalloonTipText = "Unity壁纸程序已启动";
-        notifyIcon.Text = "Unity壁纸程序";
-        //托盘按钮是否可见 
-        notifyIcon.Visible = true;
-        notifyIcon.Icon = SetTrayIcon(@UnityEngine.Application.streamingAssetsPath + "/icon.png", _width, _height);
-        //托盘气泡显示时间
-        notifyIcon.ShowBalloonTip(2000);
+        var className = new StringBuilder(256);
+        User32.GetClassName(hwnd, className, className.Capacity);
 
-        MenuItem help = new MenuItem("帮助");
-        help.Click += new EventHandler(help_Click);
-        MenuItem exit = new MenuItem("关闭");
-        exit.Click += new EventHandler(exit_Click);
-        MenuItem[] childen = new MenuItem[] { help, exit };
-        notifyIcon.ContextMenu = new System.Windows.Forms.ContextMenu(childen);
+        // 找到 WorkerW 窗口
+        if (className.ToString() == "WorkerW")
+        {
+            // 记录找到的 WorkerW，继续查找以确保找到最新的 WorkerW
+            foundWorkerW = hwnd;
+        }
+        return true;
     }
 
-    /// <summary>  
-    /// 帮助选项  
-    /// </summary>  
-    /// <param name="sender"></param>  
-    /// <param name="e"></param>  
-    private void help_Click(object sender, EventArgs e)
+    [MonoPInvokeCallback(typeof(User32.EnumChildProc))]
+    private static bool StaticEnumChildWindowsCallback(IntPtr hwnd, IntPtr lParam)
     {
-        UnityEngine.Application.OpenURL("https://blog.csdn.net/AWNUXCVBN");
-    }
-
-    private void exit_Click(object sender, EventArgs e)
-    {
-        notifyIcon.Dispose();
-        User32.DestroyWindow(unityWindow);
-        UnityEngine.Application.Quit();
-    }
-
-    /// <summary>
-    /// 设置程序托盘图标
-    /// </summary>
-    /// <param name="iconPath">图标路径</param>
-    /// <param name="width">宽</param>
-    /// <param name="height">高</param>
-    /// <returns>图标</returns>
-    private Icon SetTrayIcon(string iconPath, int width, int height)
-    {
-        Bitmap bt = new Bitmap(iconPath);
-        Bitmap fitSizeBt = new Bitmap(bt, width, height);
-        return Icon.FromHandle(fitSizeBt.GetHicon());
+        var className = new StringBuilder(256);
+        User32.GetClassName(hwnd, className, className.Capacity);
+        if (className.ToString() == "SHELLDLL_DefView")
+        {
+            foundDefView = hwnd;
+            return false; // 找到即停
+        }
+        return true;
     }
 }
