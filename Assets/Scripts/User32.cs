@@ -1,58 +1,64 @@
 using System;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public class User32
 {
-    [DllImport("kernel32.dll")]
-    public extern static IntPtr LoadLibrary(string path);
+    // ====================================================================================
+    // 1. P/Invoke 声明 (Windows API)
+    // ====================================================================================
 
+    // 查找窗口
     [DllImport("user32.dll")]
     public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
+    // 查找子窗口
     [DllImport("user32.dll")]
-    public static extern IntPtr FindWindowEx(IntPtr hwndParent, IntPtr hwndChildAfter, string className, string winName);
+    public static extern IntPtr FindWindowEx(IntPtr parentHandle, IntPtr childAfter, string className, string windowTitle);
+
+    // 发送带有超时的消息
+    [DllImport("user32.dll")]
+    public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint timeout, out IntPtr lpdwResult);
+
+    // 设置父窗口
+    [DllImport("user32.dll")]
+    public static extern bool SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
+
+    // 设置窗口位置和大小
+    [DllImport("user32.dll")]
+    public static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
+
+    // 显示/隐藏窗口
+    [DllImport("user32.dll")]
+    public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+
+    // 获取/设置窗口样式
+    [DllImport("user32.dll")]
+    public static extern int GetWindowLong(IntPtr hWnd, int nIndex);
 
     [DllImport("user32.dll")]
-    public static extern IntPtr SetParent(IntPtr hwnd, IntPtr parentHwnd);
+    public static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
 
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    public static extern int ShowWindow(IntPtr hwnd, int nCmdShow);
-
+    // 设置分层窗口属性
     [DllImport("user32.dll")]
-    public static extern bool EnumWindows(EnumWindowsProc proc, IntPtr lParam);
-    public delegate bool EnumWindowsProc(IntPtr hwnd, IntPtr lParam);
+    public static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
 
+    // 枚举子窗口
     [DllImport("user32.dll")]
-    public static extern IntPtr SendMessageTimeout(IntPtr hwnd,
-        uint msg,
-        IntPtr wParam,
-        IntPtr lParam,
-        uint fuFlage,
-        uint timeout,
-        IntPtr result);
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumChildWindows(IntPtr hwndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
 
-    /// <summary>
-    /// 获得本窗体的句柄  
-    /// </summary>
-    /// <returns></returns>
+    // 获取窗口类名
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
+    public static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
+
+    // 获取当前活动窗口句柄
     [DllImport("user32.dll")]
-    public static extern IntPtr GetForegroundWindow();
+    public static extern IntPtr GetActiveWindow();
 
-    /// <summary>
-    /// 设置窗口名
-    /// </summary>
-    /// <param name="hwnd"></param>
-    /// <param name="lpString"></param>
-    /// <returns></returns>
-    [DllImport("user32.dll", EntryPoint = "SetWindowText", CharSet = CharSet.Ansi)]
-    public static extern int SetWindowText(int hwnd, string lpString);
+    // EnumChildWindows 的回调委托
+    public delegate bool EnumChildProc(IntPtr hwnd, IntPtr lParam);
 
     [DllImport("user32.dll")]
     public static extern bool DestroyWindow(IntPtr hWnd);
-
-    [DllImport("user32.dll")]
-    public static extern IntPtr SetFocus(IntPtr hWnd);
-
-    [DllImport("user32.dll", CharSet = CharSet.Auto)]
-    public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni);
 }

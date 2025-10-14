@@ -1,6 +1,5 @@
 using System;
 using System.Drawing;
-using System.Runtime.InteropServices;
 using System.Text;
 using System.Windows.Forms;
 using UnityEngine;
@@ -12,61 +11,6 @@ public class WallpaperController : MonoBehaviour
     NotifyIcon notifyIcon = new NotifyIcon();
     //托盘图标的宽高
     int _width = 50, _height = 50;
-
-    // ====================================================================================
-    // 1. P/Invoke 声明 (Windows API)
-    // ====================================================================================
-
-    // 查找窗口
-    [DllImport("user32.dll")]
-    static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
-
-    // 查找子窗口
-    [DllImport("user32.dll")]
-    static extern IntPtr FindWindowEx(IntPtr parentHandle, IntPtr childAfter, string className, string windowTitle);
-
-    // 发送带有超时的消息
-    [DllImport("user32.dll")]
-    static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint timeout, out IntPtr lpdwResult);
-
-    // 设置父窗口
-    [DllImport("user32.dll")]
-    static extern bool SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
-
-    // 设置窗口位置和大小
-    [DllImport("user32.dll")]
-    static extern bool SetWindowPos(IntPtr hWnd, IntPtr hWndInsertAfter, int X, int Y, int cx, int cy, uint uFlags);
-
-    // 显示/隐藏窗口
-    [DllImport("user32.dll")]
-    static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
-
-    // 获取/设置窗口样式
-    [DllImport("user32.dll")]
-    static extern int GetWindowLong(IntPtr hWnd, int nIndex);
-
-    [DllImport("user32.dll")]
-    static extern int SetWindowLong(IntPtr hWnd, int nIndex, int dwNewLong);
-
-    // 设置分层窗口属性
-    [DllImport("user32.dll")]
-    static extern bool SetLayeredWindowAttributes(IntPtr hwnd, uint crKey, byte bAlpha, uint dwFlags);
-
-    // 枚举子窗口
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    static extern bool EnumChildWindows(IntPtr hwndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
-
-    // 获取窗口类名
-    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
-    static extern int GetClassName(IntPtr hWnd, StringBuilder lpClassName, int nMaxCount);
-
-    // 获取当前活动窗口句柄
-    [DllImport("user32.dll")]
-    static extern IntPtr GetActiveWindow();
-
-    // EnumChildWindows 的回调委托
-    delegate bool EnumChildProc(IntPtr hwnd, IntPtr lParam);
 
     // ====================================================================================
     // 2. 常量定义
@@ -110,7 +54,7 @@ public class WallpaperController : MonoBehaviour
     {
         Screen.SetResolution(width, height, false);
         // 1. 获取 Unity 窗口句柄
-        unityWindow = GetActiveWindow();
+        unityWindow = User32.GetActiveWindow();
         Invoke("SetWallPaper", 0.1f);
         InitTray();
     }
@@ -126,9 +70,9 @@ public class WallpaperController : MonoBehaviour
         }
 
         // 临时隐藏窗口，避免闪烁
-        ShowWindow(unityWindow, 0);
+        User32.ShowWindow(unityWindow, 0);
 
-        IntPtr progman = FindWindow("Progman", null);
+        IntPtr progman = User32.FindWindow("Progman", null);
         if (progman == IntPtr.Zero)
         {
             Debug.LogError("未找到 Progman");
@@ -137,14 +81,14 @@ public class WallpaperController : MonoBehaviour
 
         // 2. 发送消息激活 WorkerW（生成或显示用于放置背景的 WorkerW 窗口）
         // 0x052C 是 WM_SPAWN_WORKERW 消息
-        SendMessageTimeout(progman, 0x052C, IntPtr.Zero, IntPtr.Zero, 0, 1000, out _);
+        User32.SendMessageTimeout(progman, 0x052C, IntPtr.Zero, IntPtr.Zero, 0, 1000, out _);
 
         // 3. 遍历 Progman 的子窗口，寻找 WorkerW (真正的壁纸容器)
         foundWorkerW = IntPtr.Zero;
-        EnumChildWindows(progman, (hwnd, param) =>
+        User32.EnumChildWindows(progman, (hwnd, param) =>
         {
             var className = new StringBuilder(256);
-            GetClassName(hwnd, className, className.Capacity);
+            User32.GetClassName(hwnd, className, className.Capacity);
 
             // 找到 WorkerW 窗口
             if (className.ToString() == "WorkerW")
@@ -166,23 +110,22 @@ public class WallpaperController : MonoBehaviour
             Debug.Log("✅ 找到 WorkerW 作为父窗口。");
         }
 
-
         // 4. 设置窗口样式：分层 + 不激活
         // WS_EX_NOACTIVATE 确保 Unity 窗口不会抢夺焦点，这是避免 Z-order 混乱的关键。
-        int exStyle = GetWindowLong(unityWindow, GWL_EXSTYLE); //| WS_EX_LAYERED | WS_EX_NOACTIVATE
-        SetWindowLong(unityWindow, GWL_EXSTYLE, exStyle);
-        int style = GetWindowLong(unityWindow, GWL_STYLE);
-        SetWindowLong(unityWindow, GWL_STYLE, WS_POPUP);
+        int exStyle = User32.GetWindowLong(unityWindow, GWL_EXSTYLE); //| WS_EX_LAYERED | WS_EX_NOACTIVATE
+        User32.SetWindowLong(unityWindow, GWL_EXSTYLE, exStyle);
+        int style = User32.GetWindowLong(unityWindow, GWL_STYLE);
+        User32.SetWindowLong(unityWindow, GWL_STYLE, WS_POPUP);
         // 必须设为不透明 (255)，否则可能导致图标背景变成黑色或透明
-        SetLayeredWindowAttributes(unityWindow, 0, 255, LWA_ALPHA);
+        User32.SetLayeredWindowAttributes(unityWindow, 0, 255, LWA_ALPHA);
 
         // 5. 将 Unity 窗口嵌入到 WorkerW/Progman 中
-        SetParent(unityWindow, parentWindow);
+        User32.SetParent(unityWindow, parentWindow);
 
         // 6. 设置 Unity 窗口大小和 Z-Order
         // 将 Unity 窗口置于 WorkerW 子窗口的 **最底层 (HWND_BOTTOM)**
         // 这样可以确保它在桌面图标（SHELLDLL_DefView）之下。
-        SetWindowPos(unityWindow, HWND_BOTTOM, 0, 0, width, height, SWP_NOACTIVATE);
+        User32.SetWindowPos(unityWindow, HWND_BOTTOM, 0, 0, width, height, SWP_NOACTIVATE);
 
         // 7. 查找 SHELLDLL_DefView（桌面图标容器）
         // 这一步现在是可选的，因为我们依赖 SetParent/HWND_BOTTOM 的组合。
@@ -190,10 +133,10 @@ public class WallpaperController : MonoBehaviour
 
         // 尝试在 Progman 的所有子窗口中查找 DefView
         foundDefView = IntPtr.Zero;
-        EnumChildWindows(progman, (hwnd, param) =>
+        User32.EnumChildWindows(progman, (hwnd, param) =>
         {
             var className = new StringBuilder(256);
-            GetClassName(hwnd, className, className.Capacity);
+            User32.GetClassName(hwnd, className, className.Capacity);
             if (className.ToString() == "SHELLDLL_DefView")
             {
                 foundDefView = hwnd;
@@ -209,7 +152,7 @@ public class WallpaperController : MonoBehaviour
             // 在第 6 步使用 HWND_BOTTOM 成功后，这一步可能不再需要。
             // 但如果图标仍被覆盖，取消注释这一行。
             // SetWindowPos(foundDefView, HWND_TOP, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-            ShowWindow(foundDefView, SW_SHOW);
+            User32.ShowWindow(foundDefView, SW_SHOW);
             Debug.Log("✅ 桌面图标容器已处理。");
         }
         else
@@ -218,14 +161,14 @@ public class WallpaperController : MonoBehaviour
         }
 
         // 9. 显示 Unity 壁纸
-        ShowWindow(unityWindow, SW_SHOW);
+        User32.ShowWindow(unityWindow, SW_SHOW);
 
         // 10. 转移焦点（防止 Unity 窗口激活破坏 Z-order）
-        IntPtr tray = FindWindow("Shell_TrayWnd", null);
+        IntPtr tray = User32.FindWindow("Shell_TrayWnd", null);
         if (tray != IntPtr.Zero)
         {
             // 再次确保任务栏可见，触发焦点转移
-            ShowWindow(tray, SW_SHOW);
+            User32.ShowWindow(tray, SW_SHOW);
         }
 #endif
     }
