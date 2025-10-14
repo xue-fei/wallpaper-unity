@@ -70,6 +70,9 @@ public class WallpaperController : MonoBehaviour
     const int WS_EX_NOACTIVATE = 0x08000000;   // 不激活窗口，不接受焦点
     const uint LWA_ALPHA = 0x2;                // 设置透明度
 
+    const int GWL_STYLE = -16;
+    const int WS_POPUP = 8388608;
+
     // Z-Order 常量
     static readonly IntPtr HWND_TOP = new IntPtr(0);
     static readonly IntPtr HWND_BOTTOM = new IntPtr(1);
@@ -159,6 +162,8 @@ public class WallpaperController : MonoBehaviour
         // WS_EX_NOACTIVATE 确保 Unity 窗口不会抢夺焦点，这是避免 Z-order 混乱的关键。
         int exStyle = GetWindowLong(unityWindow, GWL_EXSTYLE); //| WS_EX_LAYERED | WS_EX_NOACTIVATE
         SetWindowLong(unityWindow, GWL_EXSTYLE, exStyle );
+        int style = GetWindowLong(unityWindow, GWL_STYLE);
+        SetWindowLong(unityWindow, GWL_STYLE, WS_POPUP);
         // 必须设为不透明 (255)，否则可能导致图标背景变成黑色或透明
         SetLayeredWindowAttributes(unityWindow, 0, 255, LWA_ALPHA);
 
