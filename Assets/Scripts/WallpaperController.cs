@@ -56,6 +56,7 @@ public class WallpaperController : MonoBehaviour
         WinScreenInfo.GetVirtualScreenSize(out width, out height);
 
         UnityEngine.Screen.SetResolution(width, height, false);
+        Application.targetFrameRate = 25;
         // 1. 获取 Unity 窗口句柄
         unityWindow = User32.GetActiveWindow();
         Invoke("SetWallPaper", 0.1f);
