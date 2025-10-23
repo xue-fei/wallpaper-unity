@@ -6,6 +6,6 @@ EditorBuildSettings:
   serializedVersion: 2
   m_Scenes:
   - enabled: 1
-    path: Assets/Scene/WallPaper.unity
+    path: Assets/Scenes/WallPaper.unity
     guid: 3c68892c01d8dc344819f841a09ae267
   m_configObjects: {}

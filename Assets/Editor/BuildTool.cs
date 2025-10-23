@@ -23,7 +23,7 @@ public class BuildTool : Editor
         {
             Directory.CreateDirectory(rootPath + sceneName + "/");
         }
-
+        PlayerSettings.SetScriptingBackend(BuildTargetGroup.Standalone, ScriptingImplementation.IL2CPP);
         BuildReport br = BuildPipeline.BuildPlayer(new[] { "Assets/Scene/WallPaper.unity" },
             rootPath + sceneName + "/" + sceneName + ".exe", BuildTarget.StandaloneWindows64, BuildOptions.None);
         if (br.files.Length < 0)

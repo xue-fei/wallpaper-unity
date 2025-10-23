@@ -55,11 +55,13 @@ public class WallpaperController : MonoBehaviour
 
     public Text text;
 
-    //托盘图标的宽高
-    int _width = 50, _height = 50;
+    private NotifyIconItem m_NotifyIconItem;
 
     void Start()
     {
+        m_NotifyIconItem = new NotifyIconItem();
+        m_NotifyIconItem.Init();
+
         WinScreenInfo.GetVirtualScreenSize(out width, out height);
 
         UnityEngine.Screen.SetResolution(width, height, false);
@@ -179,6 +181,11 @@ public class WallpaperController : MonoBehaviour
     private void OnApplicationFocus(bool focus)
     {
         this.focus = focus;
+    }
+
+    private void OnDestroy()
+    {
+        m_NotifyIconItem.Dispose();
     }
 
     [MonoPInvokeCallback(typeof(User32.EnumChildProc))]
