@@ -3,6 +3,8 @@ using System;
 using System.Runtime.InteropServices;
 using System.Text;
 using UnityEngine;
+using UnityEngine.UI;
+using Application = UnityEngine.Application;
 
 public class WallpaperController : MonoBehaviour
 {
@@ -50,6 +52,11 @@ public class WallpaperController : MonoBehaviour
 
     int width = 2720;
     int height = 1080;
+
+    public Text text;
+
+    //托盘图标的宽高
+    int _width = 50, _height = 50;
 
     void Start()
     {
@@ -152,6 +159,26 @@ public class WallpaperController : MonoBehaviour
             User32.ShowWindow(tray, SW_SHOW);
         }
 #endif
+    }
+
+    bool focus = false;
+    private void FixedUpdate()
+    {
+        text.text = "焦点：" + focus;
+        if (!focus)
+        {
+            User32.SetFocus(unityWindow);
+        }
+        //text.text = "鼠标位置:" + Input.mousePosition;
+        if (Input.GetMouseButton(0))
+        {
+            text.text = "鼠标点击";
+        }
+    }
+
+    private void OnApplicationFocus(bool focus)
+    {
+        this.focus = focus;
     }
 
     [MonoPInvokeCallback(typeof(User32.EnumChildProc))]

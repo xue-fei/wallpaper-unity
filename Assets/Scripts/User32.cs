@@ -61,4 +61,8 @@ public class User32
 
     [DllImport("user32.dll")]
     public static extern bool DestroyWindow(IntPtr hWnd);
+
+    // 设置指定窗口的键盘焦点
+    [DllImport("user32.dll")]
+    public static extern IntPtr SetFocus(IntPtr hWnd);
 }
