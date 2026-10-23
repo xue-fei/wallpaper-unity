@@ -30,9 +30,21 @@ public class WallpaperController : MonoBehaviour
     const int WS_EX_NOREDIRECTIONBITMAP = 0x02000000;  // raised desktop（Win11 / 较新 Win10）
     const int WS_POPUP = unchecked((int)0x80000000);
     const int WS_CHILD = unchecked((int)0x40000000);
+    // 需要清除的非客户区样式（否则子窗口仍保留标题栏/边框，客户区比窗口小几像素 → 边缘漏桌面）
+    const int WS_CAPTION = 0x00C00000;        // 标题栏（含菜单）
+    const int WS_THICKFRAME = 0x00040000;     // 可调整大小的粗边框
+    const int WS_BORDER = 0x00800000;         // 细边框
+    const int WS_SYSMENU = 0x00080000;        // 标题栏系统菜单
+    const int WS_MINIMIZEBOX = 0x00020000;    // 最小化按钮
+    const int WS_MAXIMIZEBOX = 0x00010000;    // 最大化按钮
+    const int WS_EX_CLIENTEDGE = 0x00000200;  // 凹陷客户区边缘
+    const int WS_EX_WINDOWEDGE = 0x00000100;  // 凸起窗口边缘
+    const int WS_EX_STATICEDGE = 0x00020000;  // 静态边缘
+    const int WS_EX_DLGMODALFRAME = 0x00000001; // 对话框模态边框
     const uint SWP_NOACTIVATE = 0x0010;
     const uint SWP_NOSIZE = 0x0001;
     const uint SWP_NOMOVE = 0x0002;
+    const uint SWP_FRAMECHANGED = 0x0020;     // 强制重算非客户区（使样式变更立即生效）
     const int SW_HIDE = 0;
     const int SW_SHOW = 5;
     const int SW_RESTORE = 9;
@@ -230,16 +242,36 @@ public class WallpaperController : MonoBehaviour
         int style = User32.GetWindowLong(unityWindow, GWL_STYLE);
         style &= ~WS_POPUP;
         style |= WS_CHILD;
+        // 关键：清掉所有非客户区样式（标题栏/边框/系统菜单/最大最小化按钮）。
+        // 否则 WS_CHILD 子窗口仍保留 1px 边框，客户区比窗口小 2px，
+        // 壁纸右下边缘露出桌面（实测 1918x1078 vs 真实 1920x1080，差 2px）。
+        style &= ~(WS_CAPTION | WS_THICKFRAME | WS_BORDER | WS_SYSMENU
+                   | WS_MINIMIZEBOX | WS_MAXIMIZEBOX);
         User32.SetWindowLong(unityWindow, GWL_STYLE, style);
 
         int ex = User32.GetWindowLong(unityWindow, GWL_EXSTYLE);
         ex |= WS_EX_NOACTIVATE;
+        // 清掉扩展边框样式（客户区/窗口/静态/对话框模态边缘）
+        ex &= ~(WS_EX_CLIENTEDGE | WS_EX_WINDOWEDGE | WS_EX_STATICEDGE | WS_EX_DLGMODALFRAME);
         User32.SetWindowLong(unityWindow, GWL_EXSTYLE, ex);
 
         // 4) 挂到壁纸层 WorkerW（该层在图标之下、默认壁纸图之上）。
         User32.SetParent(unityWindow, workerW);
+
+        // 铺满目标取自壁纸层 WorkerW 的客户区尺寸（精确等于桌面覆盖区域，
+        // 绕开分辨率/DPI 误差，单屏多屏都准确）。
+        User32.RECT parentClient;
+        User32.GetClientRect(workerW, out parentClient);
+        int fillW = parentClient.right - parentClient.left;
+        int fillH = parentClient.bottom - parentClient.top;
+        if (fillW <= 0 || fillH <= 0) { fillW = Screen.width; fillH = Screen.height; }
+
         // 5) 沉底 + 铺满全屏
-        User32.SetWindowPos(unityWindow, HWND_BOTTOM, 0, 0, Screen.width, Screen.height, SWP_NOACTIVATE);
+        //    SWP_FRAMECHANGED 让上面清掉的边框/标题栏立即重算，客户区精确铺满。
+        User32.SetWindowPos(unityWindow, HWND_BOTTOM, 0, 0, fillW, fillH,
+            SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        // 保险：读取真实客户区，若仍有残余边框导致偏小，按差值放大窗口，杜绝边缘漏桌面
+        EnsureClientSize(unityWindow, fillW, fillH);
         User32.ShowWindow(unityWindow, SW_SHOW);
 
         // 缓存窗口屏幕矩形（用于钩子精确命中判断）
@@ -255,6 +287,27 @@ public class WallpaperController : MonoBehaviour
     // 壁纸层 WorkerW 搜索结果（静态，供枚举回调使用）
     private static IntPtr s_FoundWorkerW;
     private static uint s_ExplorerPid;
+
+    /// <summary>
+    /// 确保子窗口客户区精确等于目标尺寸。清除边框后若仍有隐藏非客户区导致客户区偏小，
+    /// 按（目标 - 实际）差值放大窗口外层尺寸，确保壁纸铺满全屏、右下边缘不露桌面。
+    /// 客户区偏大（理论上不会）则不处理。
+    /// </summary>
+    void EnsureClientSize(IntPtr hwnd, int targetW, int targetH)
+    {
+        User32.RECT client;
+        User32.GetClientRect(hwnd, out client);
+        int cw = client.right - client.left;
+        int ch = client.bottom - client.top;
+        int dw = targetW - cw;
+        int dh = targetH - ch;
+        if (dw <= 0 && dh <= 0) return;   // 已铺满，无需补偿
+        User32.RECT win;
+        User32.GetWindowRect(hwnd, out win);
+        int ww = (win.right - win.left) + dw;
+        int wh = (win.bottom - win.top) + dh;
+        User32.SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, ww, wh, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+    }
 
     /// <summary>
     /// 发送 0x052C 创建壁纸层 WorkerW，轮询重试直到它真正出现。
