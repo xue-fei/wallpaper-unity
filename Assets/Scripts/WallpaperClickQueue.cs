@@ -14,7 +14,7 @@ public class WallpaperClickQueue
     public struct RawClick
     {
         public int kind;        // 0=移动 1=按下 2=抬起 3=滚轮 4=横向滚轮 5=强制释放
-        public float nx, ny;    // 归一化坐标 0..1，Y 向上（Unity 约定）
+        public int px, py;      // 客户区像素坐标（Y 向下，与 Unity 屏幕坐标一致）
         public int button;      // 0=左 1=右 2=中
         public float wheel;     // 滚轮增量（以“格”为单位）
     }
@@ -22,7 +22,7 @@ public class WallpaperClickQueue
     private readonly object m_Lock = new object();
     private readonly List<RawClick> m_List = new List<RawClick>();
 
-    public void EnqueueMove(float nx, float ny)
+    public void EnqueueMove(int px, int py)
     {
         lock (m_Lock)
         {
@@ -30,12 +30,12 @@ public class WallpaperClickQueue
             if (m_List.Count > 0 && m_List[m_List.Count - 1].kind == 0)
             {
                 RawClick last = m_List[m_List.Count - 1];
-                last.nx = nx; last.ny = ny;
+                last.px = px; last.py = py;
                 m_List[m_List.Count - 1] = last;
             }
             else
             {
-                m_List.Add(new RawClick { kind = 0, nx = nx, ny = ny });
+                m_List.Add(new RawClick { kind = 0, px = px, py = py });
             }
         }
     }
