@@ -11,6 +11,9 @@ public class NotifyIconItem
 
     public IntPtr HWnd => m_HWnd;
 
+    // 壁纸控制器引用（托盘菜单的“恢复窗口 / 退出”转发给它）
+    public static WallpaperController Controller;
+
     private const int MaximizeID = 1001;                 // 任务栏菜单—最大化
     private const int MinimizeID = 1002;                 // 任务栏菜单—最小化
     private const int QuitID = 1003;                 // 任务栏菜单—退出
@@ -116,8 +119,9 @@ public class NotifyIconItem
                         // 中键点击
                         break;
                     case User32.WM_LBUTTONDBLCLK:
-                        // 左键双击
-                        User32.ShowWindowAsync(hWnd, User32.SW_SHOW);
+                        // 左键双击：恢复为普通窗口
+                        if (Controller != null) Controller.RestoreToWindow();
+                        else User32.ShowWindowAsync(hWnd, User32.SW_SHOW);
                         break;
                     case User32.WM_RBUTTONDBLCLK:
                         // 右键双击
@@ -139,8 +143,9 @@ public class NotifyIconItem
                     User32.ShowWindowAsync(hWnd, User32.SW_MAXIMIZE);
                     break;
                 case QuitID:
-                    // 关闭
-                    Application.Quit(0);
+                    // 关闭（先解除壁纸挂接，再退出）
+                    if (Controller != null) Controller.QuitApp();
+                    else Application.Quit(0);
                     break;
                 default:
                     Debug.Log($"未处理的菜单点击事件 ID值:{(int)wParam}");

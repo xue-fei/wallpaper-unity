@@ -20,6 +20,13 @@ public class User32
     [DllImport("user32.dll")]
     public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint timeout, out IntPtr lpdwResult);
 
+    // SendMessageTimeout 的 fuFlags（避免 flags=0 时 WorkerW 不生成）
+    public const uint SMTO_NORMAL = 0x0000;
+    public const uint SMTO_BLOCK = 0x0001;        // 阻塞直到超时或收到返回
+    public const uint SMTO_ABORTIFHUNG = 0x0002;  // 目标挂起则提前返回
+    public const uint SMTO_NOTIMEOUTIFNOTHUNG = 0x0008;
+    public const uint SMTO_FLAGS = SMTO_NORMAL | SMTO_BLOCK | SMTO_ABORTIFHUNG;
+
     // 设置父窗口
     [DllImport("user32.dll")]
     public static extern bool SetParent(IntPtr hWndChild, IntPtr hWndNewParent);
@@ -47,6 +54,22 @@ public class User32
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool EnumChildWindows(IntPtr hwndParent, EnumChildProc lpEnumFunc, IntPtr lParam);
+
+    // 枚举顶层窗口（找 WorkerW 用）
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumWindows(EnumWindowsProc lpEnumFunc, IntPtr lParam);
+
+    public delegate bool EnumWindowsProc(IntPtr hWnd, IntPtr lParam);
+
+    // 取窗口所属进程 ID（用于判断是否属于 Explorer）
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
+
+    // 窗口是否可见（父窗口隐藏时子窗口 WS_VISIBLE 仍为 TRUE，必须用这个）
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindowVisible(IntPtr hWnd);
 
     // 获取窗口类名
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]
@@ -155,6 +178,109 @@ public class User32
         MF_SEPARATOR = 0x800,
         MF_REMOVE = 0x1000,
     }
+
+    // ====================================================================================
+    // 低层鼠标钩子 (WH_MOUSE_LL) 与坐标换算 —— 纯 C# 壁纸输入（无需注入 Explorer）
+    // ====================================================================================
+    public const int WH_MOUSE_LL = 14;
+    public const int WM_MOUSEMOVE = 0x0200;
+    public const int WM_LBUTTONUP = 0x0202;
+    public const int WM_RBUTTONUP = 0x0205;
+    public const int WM_MBUTTONUP = 0x0208;
+    public const int WM_MOUSEWHEEL = 0x020A;
+    public const int WM_MOUSEHWHEEL = 0x020E;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct RECT
+    {
+        public int left, top, right, bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSLLHOOKSTRUCT
+    {
+        public POINT pt;
+        public uint mouseData;
+        public uint flags;
+        public uint time;
+        public IntPtr dwExtraInfo;
+    }
+
+    public delegate IntPtr LowLevelMouseProc(int nCode, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetWindowsHookEx(int idHook, LowLevelMouseProc lpfn, IntPtr hMod, uint dwThreadId);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool UnhookWindowsHookEx(IntPtr hhk);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr CallNextHookEx(IntPtr hhk, int nCode, IntPtr wParam, IntPtr lParam);
+
+    // 注意：GetModuleHandle 实际导出在 kernel32.dll（不是 user32.dll）。
+    // 传 null 字符串得到当前进程模块句柄，作为 WH_MOUSE_LL 钩子的 hMod。
+    [DllImport("kernel32.dll", CharSet = CharSet.Auto, SetLastError = true)]
+    public static extern IntPtr GetModuleHandle(string lpModuleName);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool ScreenToClient(IntPtr hWnd, ref POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetClientRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PtInRect(ref RECT lprc, POINT pt);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetWindowRect(IntPtr hWnd, out RECT lpRect);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetParent(IntPtr hWnd);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetForegroundWindow();
+
+    /// <summary>获取指定屏幕坐标处最顶层的窗口（含子窗口）。用于精确判定鼠标是否落在桌面/壁纸层。</summary>
+    [DllImport("user32.dll")]
+    public static extern IntPtr WindowFromPoint(POINT point);
+
+    // ---- 独立钩子线程所需的消息泵 API ----
+
+    public const int WM_QUIT = 0x0012;
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MSG
+    {
+        public IntPtr hwnd;
+        public uint message;
+        public IntPtr wParam;
+        public IntPtr lParam;
+        public uint time;
+        public POINT pt;
+    }
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool GetMessage(out MSG lpMsg, IntPtr hWnd, uint wMsgFilterMin, uint wMsgFilterMax);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool TranslateMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DispatchMessage(ref MSG lpMsg);
+
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool PostThreadMessage(uint idThread, uint Msg, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentThreadId();
 
     public static IntPtr GetWindow(string titleOrClassname)
     {
