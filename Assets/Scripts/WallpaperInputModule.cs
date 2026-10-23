@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Text;
 using UnityEngine;
 using UnityEngine.EventSystems;
 
@@ -77,31 +76,6 @@ public class WallpaperInputModule : StandaloneInputModule
             if (h != null) return h;
         }
         return null;
-    }
-
-    /// <summary>当前 raycast 命中列表的可读描述（用于诊断遮挡）。</summary>
-    private string DescribeRaycastList()
-    {
-        if (m_RaycastResults.Count == 0) return "(空)";
-        var sb = new StringBuilder(128);
-        int n = Mathf.Min(m_RaycastResults.Count, 6);
-        for (int i = 0; i < n; i++)
-        {
-            var go = m_RaycastResults[i].gameObject;
-            if (i > 0) sb.Append(" > ");
-            sb.Append(go != null ? go.name : "?");
-        }
-        if (m_RaycastResults.Count > n) sb.Append(" …共").Append(m_RaycastResults.Count);
-        return sb.ToString();
-    }
-
-    /// <summary>
-    /// 取得「最上层」命中对象的名称（用于诊断文本，判断遮挡情况）。
-    /// </summary>
-    private string DescribeTopHit(PointerEventData p)
-    {
-        var go = p.pointerCurrentRaycast.gameObject;
-        return go != null ? go.name : "无";
     }
 
     public override void Process()
@@ -194,16 +168,13 @@ public class WallpaperInputModule : StandaloneInputModule
     {
         var currentOverGo = pointer.pointerCurrentRaycast.gameObject;
 
-        // 诊断：记录 raycast 命中情况
+        // 诊断计数：记录 raycast 命中情况
         PressCount++;
         if (currentOverGo != null)
         {
             RaycastHitCount++;
             LastHitName = currentOverGo.name;
         }
-        WallpaperDebugLog.Diag("按下 id=" + pointer.pointerId + " pos=" + (int)pointer.position.x + "," + (int)pointer.position.y
-            + " 命中=" + DescribeTopHit(pointer)
-            + " 射线列表=" + DescribeRaycastList());
 
         pointer.pressPosition = pointer.position;
         pointer.pointerPressRaycast = pointer.pointerCurrentRaycast;
@@ -222,8 +193,6 @@ public class WallpaperInputModule : StandaloneInputModule
             GameObject newPressed = ExecuteEvents.ExecuteHierarchy(
                 clickable, pointer, ExecuteEvents.initializePotentialDrag);
             if (newPressed != null) pointer.pointerDrag = newPressed;
-
-            WallpaperDebugLog.Diag("  按下解析到可点击对象=" + clickable.name);
         }
         else if (currentOverGo != null)
         {
@@ -250,16 +219,10 @@ public class WallpaperInputModule : StandaloneInputModule
         // 点击判定：与 ProcessPress 使用【同一套】穿透遮挡解析规则，
         // 保证 pointerPress == pointerUpHandler 成立（否则点击永不触发）。
         var clickable = FindClickableTarget(pointer);
-        WallpaperDebugLog.Diag("抬起 命中=" + (currentOverGo != null ? currentOverGo.name : "无")
-            + " press=" + (pointer.pointerPress != null ? pointer.pointerPress.name : "无")
-            + " upHandler=" + (clickable != null ? clickable.name : "无")
-            + " eligible=" + pointer.eligibleForClick);
 
         if (clickable != null && pointer.pointerPress == clickable && pointer.eligibleForClick)
         {
             ClickCount++;
-            WallpaperDebugLog.Write("触发点击: " + pointer.pointerPress.name
-                + " (命中=" + (currentOverGo != null ? currentOverGo.name : "无") + ")");
             ExecuteEvents.Execute(pointer.pointerPress, pointer, ExecuteEvents.pointerClickHandler);
         }
 

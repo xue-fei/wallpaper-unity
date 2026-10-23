@@ -72,8 +72,6 @@ public class WallpaperController : MonoBehaviour
     private static bool s_AnyButtonHeld;
     private static int s_FedMoves;   // 调试：已喂给队列的移动计数
     private static int s_FedDowns;   // 调试：已喂给队列的按下计数
-    private static int s_DiagLogTick; // 调试：钩子日志限流计数
-    private static User32.POINT s_LastHookScreen; // 调试：上次钩子采样坐标（静止时不刷日志）
 
     // 钩子运行在独立线程（自建消息泵），避免阻塞 Unity 主线程造成鼠标卡顿
     private System.Threading.Thread m_HookThread;
@@ -164,7 +162,6 @@ public class WallpaperController : MonoBehaviour
         m_InputModule.BindQueue(m_Queue);
         es.UpdateModules();   // 必须：把新模块注册进 EventSystem 的模块列表，否则 Process() 不会被调用
         WallpaperDebugLog.Write("输入模块已装配: " + (m_InputModule != null ? m_InputModule.GetType().Name : "null"));
-        WallpaperDebugLog.Write("日志文件路径: " + WallpaperDebugLog.LogPath);
     }
 
     // ============================================================================
@@ -395,12 +392,7 @@ public class WallpaperController : MonoBehaviour
 
             if (!desktopish)
             {
-                // 落在非桌面窗口上（如浏览器）：不喂事件。采样记一条，便于确认「为什么没反应」
-                if ((s_DiagLogTick++ & 0x3F) == 0)
-                {
-                    WallpaperDebugLog.Diag("未喂事件 msg=" + msg + " 屏幕=" + screen.X + "," + screen.Y
-                        + " 命中=" + GetClassNameOf(hit) + "(" + hit + ")");
-                }
+                // 落在非桌面窗口上（如浏览器）：不喂事件，强制释放可能卡住的按键
                 if (s_AnyButtonHeld) { s_QueueStatic.EnqueueForceRelease(); s_AnyButtonHeld = false; }
                 return User32.CallNextHookEx(s_HookId, nCode, wParam, lParam);
             }
@@ -423,21 +415,11 @@ public class WallpaperController : MonoBehaviour
             switch (msg)
             {
                 case User32.WM_MOUSEMOVE:
-                    // 仅在「光标真的移动了」时才记日志（静止时 msg 也会被系统重发）
-                    if (s_LastHookScreen.X != screen.X || s_LastHookScreen.Y != screen.Y)
-                    {
-                        s_LastHookScreen = screen;
-                        WallpaperDebugLog.Diag("移动 屏幕=" + screen.X + "," + screen.Y
-                            + " 客户区=" + px + "," + py + " 客户区尺寸=" + client.right + "x" + client.bottom);
-                    }
                     s_QueueStatic.EnqueueMove(px, py); s_FedMoves++; break;
                 case User32.WM_LBUTTONDOWN:
-                    WallpaperDebugLog.Diag("按下 msg=" + msg + " 屏幕=" + screen.X + "," + screen.Y
-                        + " 客户区=" + px + "," + py + " 客户区尺寸=" + client.right + "x" + client.bottom);
                     s_QueueStatic.EnqueueMove(px, py);
                     s_QueueStatic.EnqueueButton(0, true); s_AnyButtonHeld = true; s_FedDowns++; break;
                 case User32.WM_LBUTTONUP:
-                    WallpaperDebugLog.Diag("抬起 msg=" + msg + " 客户区=" + px + "," + py);
                     s_QueueStatic.EnqueueButton(0, false); s_AnyButtonHeld = false; break;
                 case User32.WM_RBUTTONDOWN:
                     s_QueueStatic.EnqueueMove(px, py);
@@ -592,7 +574,6 @@ public class WallpaperController : MonoBehaviour
     void OnDemoButtonClicked()
     {
         m_ClickCount++;
-        WallpaperDebugLog.Write("按钮被点击！计数 = " + m_ClickCount);
     }
 
     void SetupDebugText()
@@ -662,20 +643,7 @@ public class WallpaperController : MonoBehaviour
                     + "\n按钮点击次数: " + m_ClickCount
                     + "\n已喂事件 移动:" + s_FedMoves + " 按下:" + s_FedDowns
                     + "\n队列剩余: " + m_Queue.Count
-                    + raycast
-                    + "\n日志: WallpaperDebug.log（exe 同目录）";
-            }
-            // 同步落盘（exe 同目录 WallpaperDebug.log），便于事后回看
-            if (m_InputModule != null)
-            {
-                WallpaperDebugLog.Diag(
-                    "按钮=" + m_ClickCount
-                    + " | 喂入 移动=" + s_FedMoves + " 按下=" + s_FedDowns + " 队列=" + m_Queue.Count
-                    + " | 模块 按下=" + m_InputModule.PressCount
-                    + " 抬起=" + m_InputModule.ReleaseCount
-                    + " 命中=" + m_InputModule.RaycastHitCount
-                    + " 点击=" + m_InputModule.ClickCount
-                    + " | 命中物=" + m_InputModule.LastHitName);
+                    + raycast;
             }
         }
     }
