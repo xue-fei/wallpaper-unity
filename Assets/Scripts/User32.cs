@@ -303,5 +303,75 @@ public class User32
         }
     }
 
+    // ====================================================================================
+    // 屏幕 / 显示器 API
+    // ====================================================================================
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int nIndex);
+
+    /// <summary>虚拟屏幕尺寸（多屏拼接），用于设置壁纸渲染分辨率。</summary>
+    public static void GetVirtualScreenSize(out int width, out int height)
+    {
+        width = GetSystemMetrics(78 /* SM_CXVIRTUALSCREEN */);
+        height = GetSystemMetrics(79 /* SM_CYVIRTUALSCREEN */);
+    }
+
+    // 显示器枚举（当前未直接使用，保留以备多屏扩展）
+    public delegate bool MonitorEnumProc(IntPtr hMonitor, IntPtr hdc, ref Rect lprcMonitor, IntPtr dwData);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct Rect
+    {
+        public int left, top, right, bottom;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO
+    {
+        public uint cbSize;
+        public Rect rcMonitor;
+        public Rect rcWork;
+        public uint dwFlags;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool EnumDisplayMonitors(IntPtr hdc, IntPtr lprcClip, MonitorEnumProc callback, IntPtr dwData);
+
+    [DllImport("user32.dll")]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
+
+    // ====================================================================================
+    // Shell 托盘 API（任务栏图标 / 图标提取）
+    // ====================================================================================
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct NOTIFYICONDATA
+    {
+        public int cbSize;
+        public IntPtr hwnd;
+        public int uID;
+        public int uFlags;
+        public int uCallbackMessage;
+        public IntPtr hIcon;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
+        public string szTip;
+        public int dwState;
+        public int dwStateMask;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
+        public string szInfo;
+        public int uTimeoutAndVersion;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
+        public string szInfoTitle;
+        public int dwInfoFlags;
+    }
+
+    [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIcon", CharSet = CharSet.Unicode)]
+    public static extern bool Shell_NotifyIcon(int dwMessage, ref NOTIFYICONDATA lpData);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr ExtractAssociatedIcon(IntPtr hInst, StringBuilder lpIconPath, out ushort lpiIcon);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr LoadIcon(IntPtr hInstance, IntPtr lpIconName);
+
     public delegate IntPtr WndProcDelegate(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam);
 }

@@ -97,7 +97,6 @@ public class WallpaperController : MonoBehaviour
     {
         s_Instance = this;
         s_QueueStatic = m_Queue;
-        WallpaperDebugLog.SetMainThread();   // 记录主线程 ID，供日志区分钩子线程
 
         try
         {
@@ -105,7 +104,7 @@ public class WallpaperController : MonoBehaviour
             m_NotifyIconItem.Init();
             NotifyIconItem.Controller = this;
         }
-        catch (Exception e) { WallpaperDebugLog.Write("警告: 托盘初始化失败 " + e.Message); }
+        catch (Exception e) { Debug.Log("警告: 托盘初始化失败 " + e.Message); }
 
         // 各步骤独立容错：任何一步异常都【不能】中断后续挂载。
         // 曾经因为 SetupDebugText 抛异常 → Start 中断 → AttachToDesktop 从未执行，
@@ -113,39 +112,39 @@ public class WallpaperController : MonoBehaviour
         try
         {
             int width, height;
-            WinScreenInfo.GetVirtualScreenSize(out width, out height);
+            User32.GetVirtualScreenSize(out width, out height);
             Screen.SetResolution(width, height, false);
             Application.targetFrameRate = 60;
         }
-        catch (Exception e) { WallpaperDebugLog.Write("警告: 分辨率设置失败 " + e.Message); }
+        catch (Exception e) { Debug.Log("警告: 分辨率设置失败 " + e.Message); }
 
         try { SetupDemoUI(); }
-        catch (Exception e) { WallpaperDebugLog.Write("警告: 演示 UI 装配失败 " + e.Message); }
+        catch (Exception e) { Debug.Log("警告: 演示 UI 装配失败 " + e.Message); }
 
         try { DisableDecorativeRaycast(); }
-        catch (Exception e) { WallpaperDebugLog.Write("警告: 装饰层 raycast 关闭失败 " + e.Message); }
+        catch (Exception e) { Debug.Log("警告: 装饰层 raycast 关闭失败 " + e.Message); }
 
         try { SetupDebugText(); }
-        catch (Exception e) { WallpaperDebugLog.Write("警告: 调试文本创建失败 " + e.Message); }
+        catch (Exception e) { Debug.Log("警告: 调试文本创建失败 " + e.Message); }
 
-        WallpaperDebugLog.Write("WallpaperController 启动 Unity=" + Application.unityVersion
+        Debug.Log("WallpaperController 启动 Unity=" + Application.unityVersion
             + " 分辨率=" + Screen.width + "x" + Screen.height
             + " dataPath=" + Application.dataPath);
 
 #if !UNITY_EDITOR
         // 输入模块 + 挂接：失败也不能让窗口停留在「全屏普通顶层窗口」状态
         try { SetupInputModule(); }
-        catch (Exception e) { WallpaperDebugLog.Write("错误: 输入模块装配异常 " + e.Message); }
+        catch (Exception e) { Debug.Log("错误: 输入模块装配异常 " + e.Message); }
 
         try
         {
             unityWindow = AcquireUnityWindow();
         }
-        catch (Exception e) { WallpaperDebugLog.Write("错误: 获取窗口句柄异常 " + e.Message); }
+        catch (Exception e) { Debug.Log("错误: 获取窗口句柄异常 " + e.Message); }
 
         if (unityWindow == IntPtr.Zero)
         {
-            WallpaperDebugLog.Write("错误: 无法获取 Unity 窗口句柄，保持窗口模式");
+            Debug.Log("错误: 无法获取 Unity 窗口句柄，保持窗口模式");
         }
         else
         {
@@ -166,14 +165,14 @@ public class WallpaperController : MonoBehaviour
     void SetupInputModule()
     {
         EventSystem es = EventSystem.current ?? FindObjectOfType<EventSystem>();
-        if (es == null) { WallpaperDebugLog.Write("错误: 场景中缺少 EventSystem"); return; }
+        if (es == null) { Debug.Log("错误: 场景中缺少 EventSystem"); return; }
         StandaloneInputModule existing = es.GetComponent<StandaloneInputModule>();
         if (existing != null && !(existing is WallpaperInputModule)) Destroy(existing);
         m_InputModule = es.GetComponent<WallpaperInputModule>();
         if (m_InputModule == null) m_InputModule = es.gameObject.AddComponent<WallpaperInputModule>();
         m_InputModule.BindQueue(m_Queue);
         es.UpdateModules();   // 必须：把新模块注册进 EventSystem 的模块列表，否则 Process() 不会被调用
-        WallpaperDebugLog.Write("输入模块已装配: " + (m_InputModule != null ? m_InputModule.GetType().Name : "null"));
+        Debug.Log("输入模块已装配: " + (m_InputModule != null ? m_InputModule.GetType().Name : "null"));
     }
 
     // ============================================================================
@@ -189,7 +188,7 @@ public class WallpaperController : MonoBehaviour
         }
         catch (Exception e)
         {
-            WallpaperDebugLog.Write("错误: 挂接桌面异常 " + e.GetType().Name + " " + e.Message);
+            Debug.Log("错误: 挂接桌面异常 " + e.GetType().Name + " " + e.Message);
             Debug.LogError("[Wallpaper] 挂接桌面异常 " + e.Message);
             try { RestoreToWindow(); } catch { }
         }
@@ -206,7 +205,7 @@ public class WallpaperController : MonoBehaviour
         User32.ShowWindow(unityWindow, SW_HIDE);
 
         IntPtr progman = User32.FindWindow("Progman", null);
-        if (progman == IntPtr.Zero) { WallpaperDebugLog.Write("错误: 未找到 Progman"); User32.ShowWindow(unityWindow, SW_SHOW); return; }
+        if (progman == IntPtr.Zero) { Debug.Log("错误: 未找到 Progman"); User32.ShowWindow(unityWindow, SW_SHOW); return; }
 
         // Explorer 的 PID = Progman 的 PID（用于过滤「属于 Explorer」的 WorkerW）
         User32.GetWindowThreadProcessId(progman, out uint explorerPid);
@@ -223,7 +222,7 @@ public class WallpaperController : MonoBehaviour
             // 自愈：Explorer 有时会延迟创建壁纸层（图标层刚建立时），重试 2 轮再放弃
             for (int retry = 0; retry < 2 && workerW == IntPtr.Zero; retry++)
             {
-                WallpaperDebugLog.Write("未找到壁纸层 WorkerW，第 " + (retry + 1) + " 次重试 Spawn 0x052C");
+                Debug.Log("未找到壁纸层 WorkerW，第 " + (retry + 1) + " 次重试 Spawn 0x052C");
                 System.Threading.Thread.Sleep(400);
                 SpawnWallpaperWorkerW(progman);
                 workerW = FindWallpaperWorkerW(progman);
@@ -231,7 +230,7 @@ public class WallpaperController : MonoBehaviour
         }
         if (workerW == IntPtr.Zero)
         {
-            WallpaperDebugLog.Write("未找到壁纸层 WorkerW，无法挂接 → 回退普通窗口");
+            Debug.Log("未找到壁纸层 WorkerW，无法挂接 → 回退普通窗口");
             Debug.LogError("[Wallpaper] 未找到壁纸层 WorkerW，无法挂接");
             RestoreToWindow();
             return;
@@ -278,7 +277,7 @@ public class WallpaperController : MonoBehaviour
         User32.GetWindowRect(unityWindow, out s_WindowScreenRect);
 
         InstallMouseHook();
-        WallpaperDebugLog.Write("已挂接为桌面壁纸（父窗口=壁纸层 WorkerW，Explorer PID=" + explorerPid + "）"
+        Debug.Log("已挂接为桌面壁纸（父窗口=壁纸层 WorkerW，Explorer PID=" + explorerPid + "）"
             + " 窗口=" + unityWindow + " 屏幕矩形=" + s_WindowScreenRect.left + "," + s_WindowScreenRect.top
             + "," + s_WindowScreenRect.right + "," + s_WindowScreenRect.bottom
             + " Screen=" + Screen.width + "x" + Screen.height + " dpi=" + Screen.dpi);
@@ -358,10 +357,10 @@ public class WallpaperController : MonoBehaviour
         s_FoundWorkerW = IntPtr.Zero;
         // 1) 顶层 WorkerW（Win10 / 常规）
         User32.EnumWindows(new User32.EnumWindowsProc(EnumWorkerWProc), IntPtr.Zero);
-        if (s_FoundWorkerW != IntPtr.Zero) { WallpaperDebugLog.Write("已定位壁纸层 WorkerW（顶层）"); return s_FoundWorkerW; }
+        if (s_FoundWorkerW != IntPtr.Zero) { Debug.Log("已定位壁纸层 WorkerW（顶层）"); return s_FoundWorkerW; }
         // 2) Progman 的直接子窗口（Win11 raised desktop）
         User32.EnumChildWindows(progman, new User32.EnumChildProc(EnumProgmanChildProc), IntPtr.Zero);
-        if (s_FoundWorkerW != IntPtr.Zero) { WallpaperDebugLog.Write("已定位壁纸层 WorkerW（Progman 子窗口）"); return s_FoundWorkerW; }
+        if (s_FoundWorkerW != IntPtr.Zero) { Debug.Log("已定位壁纸层 WorkerW（Progman 子窗口）"); return s_FoundWorkerW; }
         return IntPtr.Zero;
     }
 
@@ -390,12 +389,12 @@ public class WallpaperController : MonoBehaviour
         s_HookId = User32.SetWindowsHookEx(User32.WH_MOUSE_LL, s_MouseProc, hMod, 0);
         if (s_HookId == IntPtr.Zero)
         {
-            WallpaperDebugLog.Write("错误: 安装鼠标钩子失败，错误码 " + Marshal.GetLastWin32Error());
+            Debug.Log("错误: 安装鼠标钩子失败，错误码 " + Marshal.GetLastWin32Error());
             m_HookThreadRunning = false;
             return;
         }
         s_HookEnabled = true;
-        WallpaperDebugLog.Write("鼠标钩子已安装 (WH_MOUSE_LL, 独立线程) hookId=" + s_HookId);
+        Debug.Log("鼠标钩子已安装 (WH_MOUSE_LL, 独立线程) hookId=" + s_HookId);
 
         User32.MSG msg;
         while (m_HookThreadRunning)
@@ -539,7 +538,7 @@ public class WallpaperController : MonoBehaviour
             User32.SetForegroundWindow(unityWindow);
         }
 #endif
-        WallpaperDebugLog.Write("已恢复为普通窗口");
+        Debug.Log("已恢复为普通窗口");
     }
 
     public void QuitApp()
@@ -551,7 +550,6 @@ public class WallpaperController : MonoBehaviour
     void OnApplicationQuit()
     {
         UninstallMouseHook();
-        WallpaperDebugLog.Shutdown();   // 冲刷残余日志后再退
         if (unityWindow != IntPtr.Zero)
         {
             User32.ShowWindow(unityWindow, SW_HIDE);
@@ -573,10 +571,10 @@ public class WallpaperController : MonoBehaviour
     void SetupDemoUI()
     {
         GameObject btn = GameObject.Find("Button");
-        if (btn == null) { WallpaperDebugLog.Write("警告: 未找到名为 Button 的对象"); return; }
+        if (btn == null) { Debug.Log("警告: 未找到名为 Button 的对象"); return; }
 
         m_DemoButton = btn.GetComponent<Button>();
-        if (m_DemoButton == null) { WallpaperDebugLog.Write("警告: Button 上缺少 Button 组件"); return; }
+        if (m_DemoButton == null) { Debug.Log("警告: Button 上缺少 Button 组件"); return; }
         m_DemoButton.onClick.AddListener(OnDemoButtonClicked);
 
         // 把演示按钮设为「屏幕正中央大按钮」。
@@ -597,7 +595,7 @@ public class WallpaperController : MonoBehaviour
             }
         }
 
-        WallpaperDebugLog.Write("演示按钮已装配: " + btn.name + " 已放大居中(320x100)");
+        Debug.Log("演示按钮已装配: " + btn.name + " 已放大居中(320x100)");
     }
 
     /// <summary>
@@ -621,7 +619,7 @@ public class WallpaperController : MonoBehaviour
             if (go.GetComponent<Selectable>() != null) continue;
             g.raycastTarget = false;
         }
-        WallpaperDebugLog.Write("装饰层 raycast 已关闭（交互控件保留）");
+        Debug.Log("装饰层 raycast 已关闭（交互控件保留）");
     }
 
     void OnDemoButtonClicked()
@@ -632,7 +630,7 @@ public class WallpaperController : MonoBehaviour
     void SetupDebugText()
     {
         Canvas canvas = FindObjectOfType<Canvas>();
-        if (canvas == null) { WallpaperDebugLog.Write("警告: 未找到 Canvas，调试文本不显示"); return; }
+        if (canvas == null) { Debug.Log("警告: 未找到 Canvas，调试文本不显示"); return; }
 
         GameObject go = new GameObject("WallpaperDebugText");
         go.transform.SetParent(canvas.transform, false);

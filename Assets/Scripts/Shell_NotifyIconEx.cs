@@ -2,10 +2,13 @@
 using System.Runtime.InteropServices;
 using System.Text;
 
+/// <summary>
+/// 任务栏托盘图标封装。底层 P/Invoke（Shell_NotifyIcon / ExtractAssociatedIcon / LoadIcon）
+/// 与 NOTIFYICONDATA 结构体已统一收归 User32.cs，本类只保留托盘逻辑与常量。
+/// https://www.codeproject.com/articles/4972/shell-notifyiconex-with-balloon-tooltip
+/// </summary>
 public class Shell_NotifyIconEx
 {
-    // https://www.codeproject.com/articles/4972/shell-notifyiconex-with-balloon-tooltip
-
     // 注意:此组件由于重点在气泡提示，它要求Shell32.dll 5.0(ie 5.0) 以上
 
     private readonly IntPtr formTmpHwnd = IntPtr.Zero;
@@ -20,10 +23,6 @@ public class Shell_NotifyIconEx
 
     public Shell_NotifyIconEx(IntPtr windHandle) // 构造
     {
-        //WM_NOTIFY_TRAY += 1; // 消息ID +1，避免多个ICON 消息处理冲突
-        //uID += 1; // 同上
-        //formTmp = new InnerClass(this); // 新实例一个消息循环
-        //formTmpHwnd = formTmp.Handle; // 新实例句柄
         formTmpHwnd = windHandle;
     }
 
@@ -61,53 +60,6 @@ public class Shell_NotifyIconEx
     private const int NOTIFYICON_OLDVERSION = 0x00;
     private const int NOTIFYICON_VERSION = 0x03;
 
-    [DllImport("shell32.dll", EntryPoint = "Shell_NotifyIcon", CharSet = CharSet.Unicode)]
-    private static extern bool Shell_NotifyIcon(int dwMessage, ref NOTIFYICONDATA lpData);
-
-    /// <summary>
-    /// 此API 的作用是当 this.focus() 无效时可以考虑使用，效果很好
-    /// </summary>
-    /// <param name="hwnd">this.Handle, 当前窗体句柄</param>
-    [DllImport("user32.dll", EntryPoint = "SetForegroundWindow")]
-    public static extern int SetForegroundWindow(
-     IntPtr hwnd
-    );
-
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
-    public static extern IntPtr ExtractAssociatedIcon(IntPtr hInst, StringBuilder lpIconPath,
-        out ushort lpiIcon);
-    [DllImport("shell32.dll")]
-    static extern IntPtr ExtractIcon(IntPtr hInst, string lpszExeFileName, int nIconIndex);
-
-    // 注意一定要指定字符集为Unicode，否则气泡内容不能支持中文
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
-    private struct NOTIFYICONDATA
-    {
-        internal int cbSize;
-        internal IntPtr hwnd;
-        internal int uID;
-        internal int uFlags;
-        internal int uCallbackMessage;
-        internal IntPtr hIcon;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 128)]
-        internal string szTip;
-        internal int dwState; // 这里往下几个是 5.0 的精华
-        internal int dwStateMask;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 256)]
-        internal string szInfo;
-        internal int uTimeoutAndVersion;
-        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 64)]
-        internal string szInfoTitle;
-        internal int dwInfoFlags;
-    }
-
-    // http://www.pinvoke.net/default.aspx/user32/LoadIcon.html
-    [DllImport("user32.dll")]
-    //static extern IntPtr LoadIcon(IntPtr hInstance, string lpIconName);
-    public static extern IntPtr LoadIcon(IntPtr hInstance, IntPtr lpIconName);
-    [DllImport("kernel32.dll")]
-    public static extern IntPtr GetModuleHandle(string moduleName);
-
     public enum SystemIcons
     {
         IDI_APPLICATION = 32512,
@@ -125,9 +77,9 @@ public class Shell_NotifyIconEx
     /// <summary>
     /// 建一个结构
     /// </summary>
-    private NOTIFYICONDATA GetNOTIFYICONDATA(IntPtr iconHwnd, string sTip, string boxTitle, string boxText)
+    private User32.NOTIFYICONDATA GetNOTIFYICONDATA(IntPtr iconHwnd, string sTip, string boxTitle, string boxText)
     {
-        NOTIFYICONDATA nData = new NOTIFYICONDATA();
+        User32.NOTIFYICONDATA nData = new User32.NOTIFYICONDATA();
         // 结构的大小
         nData.cbSize = Marshal.SizeOf(nData);
         // 处理消息循环的窗体句柄，可以移成主窗体
@@ -145,7 +97,7 @@ public class Shell_NotifyIconEx
         else
         {
             // 使用默认的程序图标
-            nData.hIcon = LoadIcon(IntPtr.Zero, (IntPtr)SystemIcons.IDI_APPLICATION);
+            nData.hIcon = User32.LoadIcon(IntPtr.Zero, (IntPtr)SystemIcons.IDI_APPLICATION);
         }
 
         // 提示的超时值（几秒后自动消失）和版本
@@ -166,15 +118,10 @@ public class Shell_NotifyIconEx
     /// <summary>
     /// 加一个新图标
     /// </summary>
-    /// <param name="iconHwnd">图标句柄</param>
-    /// <param name="sTip">提示, 5.0 最大: 128 char</param>
-    /// <param name="boxTitle">气泡标题, 最大: 64 char</param>
-    /// <param name="boxText">气泡内容, 最大: 256 char</param>
-    /// <returns>成功、失败或错误(-1)</returns>
     public int AddNotifyBox(IntPtr iconHwnd, string sTip, string boxTitle, string boxText)
     {
-        NOTIFYICONDATA nData = GetNOTIFYICONDATA(iconHwnd, sTip, boxTitle, boxText);
-        if (Shell_NotifyIcon(NIM_ADD, ref nData))
+        User32.NOTIFYICONDATA nData = GetNOTIFYICONDATA(iconHwnd, sTip, boxTitle, boxText);
+        if (User32.Shell_NotifyIcon(NIM_ADD, ref nData))
         {
             this.forgetDelNotifyBox = true;
             return 1;
@@ -187,8 +134,8 @@ public class Shell_NotifyIconEx
 
     public int DelNotifyBox()
     {
-        NOTIFYICONDATA nData = GetNOTIFYICONDATA(IntPtr.Zero, null, null, null);
-        if (Shell_NotifyIcon(NIM_DELETE, ref nData))
+        User32.NOTIFYICONDATA nData = GetNOTIFYICONDATA(IntPtr.Zero, null, null, null);
+        if (User32.Shell_NotifyIcon(NIM_DELETE, ref nData))
         {
             this.forgetDelNotifyBox = false;
             return 1;
@@ -201,16 +148,14 @@ public class Shell_NotifyIconEx
 
     public int ModiNotifyBox(IntPtr iconHwnd, string sTip, string boxTitle, string boxText)
     {
-        NOTIFYICONDATA nData = GetNOTIFYICONDATA(iconHwnd, sTip, boxTitle, boxText);
-        return Shell_NotifyIcon(NIM_MODIFY, ref nData) ? 1 : 0;
+        User32.NOTIFYICONDATA nData = GetNOTIFYICONDATA(iconHwnd, sTip, boxTitle, boxText);
+        return User32.Shell_NotifyIcon(NIM_MODIFY, ref nData) ? 1 : 0;
     }
 
     #region Optional Module //这里是可选方法
     /// <summary>
     /// 连接一个已存在的 contextMenu
     /// </summary>
-    /// <param name="_formHwnd">窗体句柄，用来处理菜单的消息</param>
-    /// <param name="_contextMenuHwnd">菜单的句柄</param>
     public void ConnectMyMenu(IntPtr _formHwnd, IntPtr _contextMenuHwnd)
     {
         formHwnd = _formHwnd;

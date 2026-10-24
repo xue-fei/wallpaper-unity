@@ -42,7 +42,7 @@ public class NotifyIconItem
             return;
         var exeFilePath = $"{assetData.Parent.FullName}\\{Application.productName}.exe";
         StringBuilder exeFileSb = new StringBuilder(exeFilePath);
-        IntPtr iconPtr = Shell_NotifyIconEx.ExtractAssociatedIcon(m_HWnd, exeFileSb, out ushort uIcon);
+        IntPtr iconPtr = User32.ExtractAssociatedIcon(m_HWnd, exeFileSb, out ushort uIcon);
         m_NotifyIcon = new Shell_NotifyIconEx(m_HWnd);
         int state = m_NotifyIcon.AddNotifyBox(iconPtr, "Unity壁纸程序", Application.productName, $"Unity壁纸程序已启动");
         if (state <= 0)
