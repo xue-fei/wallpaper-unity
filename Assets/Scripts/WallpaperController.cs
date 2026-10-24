@@ -581,26 +581,6 @@ public class WallpaperController : MonoBehaviour
         m_DemoButton = btn.GetComponent<Button>();
         if (m_DemoButton == null) { Debug.Log("警告: Button 上缺少 Button 组件"); return; }
         m_DemoButton.onClick.AddListener(OnDemoButtonClicked);
-
-        // 把演示按钮设为「屏幕正中央大按钮」。
-        // 原因：场景里 Button 只有 160×30 且被 637×129 的 Text（RootOrder 更大）完全遮挡，
-        // 用户既点不中、也会被遮挡吃掉点击（日志实测 upHandler=无）。
-        // 直接放大居中，保证「一眼可见、一点就中」。
-        Canvas canvas = FindObjectOfType<Canvas>();
-        if (canvas != null)
-        {
-            RectTransform rt = btn.GetComponent<RectTransform>();
-            if (rt != null)
-            {
-                rt.anchorMin = new Vector2(0.5f, 0.5f);
-                rt.anchorMax = new Vector2(0.5f, 0.5f);
-                rt.pivot = new Vector2(0.5f, 0.5f);
-                rt.anchoredPosition = Vector2.zero;
-                rt.sizeDelta = new Vector2(320f, 100f);   // 320×100，参考空间中央
-            }
-        }
-
-        Debug.Log("演示按钮已装配: " + btn.name + " 已放大居中(320x100)");
     }
 
     /// <summary>
