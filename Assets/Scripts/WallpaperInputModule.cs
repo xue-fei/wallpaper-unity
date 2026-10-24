@@ -33,7 +33,10 @@ public class WallpaperInputModule : StandaloneInputModule
     private const float DOUBLE_CLICK_SEC = 0.5f;   // 双击时间窗（秒），接近系统默认，可按需调整
     private const float DOUBLE_CLICK_DIST = 10f;   // 双击位置容差（像素）
 
-    public void BindQueue(WallpaperClickQueue queue) { m_Queue = queue; }
+    public void BindQueue(WallpaperClickQueue queue)
+    {
+    	m_Queue = queue;
+    }
 
     /// <summary>
     /// 关键：UGUI 的 raycast 原本在 GetMousePointerEventData() 里执行（它调 eventSystem.RaycastAll）。
@@ -88,7 +91,10 @@ public class WallpaperInputModule : StandaloneInputModule
     public override void Process()
     {
         // 队列为空（如编辑器下未绑定）时退回默认处理，避免破坏其它输入
-        if (m_Queue == null) { base.Process(); return; }
+        if (m_Queue == null)
+        {
+        	base.Process(); return;
+        }
 
         // 预建左键指针(-1)：保证鼠标一移动即触发 hover。
         // 否则 m_Pointers 为空时移动事件不会被任何指针消费，导致「首次点击/滚动前 hover 不生效」。
@@ -123,7 +129,10 @@ public class WallpaperInputModule : StandaloneInputModule
                 {
                     int pid = ButtonToPointerId(ev.button);
                     PointerEventData p = GetPointer(pid);
-                    if (m_HasLast) { p.delta = m_LastPos - p.position; p.position = m_LastPos; }
+                    if (m_HasLast)
+                    {
+                    	p.delta = m_LastPos - p.position; p.position = m_LastPos;
+                    }
                     p.button = (PointerEventData.InputButton)ev.button;
                     RaycastAt(p);          // ← 必须先 raycast，保证 down/up 命中正确
                     ProcessMove(p);
@@ -135,7 +144,10 @@ public class WallpaperInputModule : StandaloneInputModule
                 case 4: // 横向滚轮
                 {
                     PointerEventData p = GetPointer(-1);
-                    if (m_HasLast) { p.delta = Vector2.zero; p.position = m_LastPos; }
+                    if (m_HasLast)
+                    {
+                    	p.delta = Vector2.zero; p.position = m_LastPos;
+                    }
                     p.scrollDelta = (ev.kind == 3)
                         ? new Vector2(0f, ev.wheel)
                         : new Vector2(ev.wheel, 0f);
@@ -273,7 +285,10 @@ public class WallpaperInputModule : StandaloneInputModule
         foreach (var kv in m_Pointers)
         {
             PointerEventData p = kv.Value;
-            if (m_HasLast) { p.delta = Vector2.zero; p.position = m_LastPos; }
+            if (m_HasLast)
+            {
+            	p.delta = Vector2.zero; p.position = m_LastPos;
+            }
             RaycastAt(p);          // ← 必须先 raycast
             ProcessMove(p);
             ProcessRelease(p);

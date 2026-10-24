@@ -190,7 +190,9 @@ public class NotifyIconItem
 
     class MonoPInvokeCallbackAttribute : Attribute
     {
-        public MonoPInvokeCallbackAttribute() { }
+        public MonoPInvokeCallbackAttribute()
+        {
+        }
     }
 
     #endregion

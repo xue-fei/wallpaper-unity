@@ -34,34 +34,57 @@ public class WallpaperClickQueue
             }
             else
             {
-                m_List.Add(new RawClick { kind = 0, px = px, py = py });
+                m_List.Add(new RawClick
+                {
+                	kind = 0, px = px, py = py
+                }
+                );
             }
         }
     }
 
     public void EnqueueButton(int button, bool down)
     {
-        lock (m_Lock) m_List.Add(new RawClick { kind = down ? 1 : 2, button = button });
+        lock (m_Lock) m_List.Add(new RawClick
+        {
+        	kind = down ? 1 : 2, button = button
+        }
+        );
     }
 
     public void EnqueueWheel(float wheel)
     {
-        lock (m_Lock) m_List.Add(new RawClick { kind = 3, wheel = wheel });
+        lock (m_Lock) m_List.Add(new RawClick
+        {
+        	kind = 3, wheel = wheel
+        }
+        );
     }
 
     public void EnqueueWheelH(float wheel)
     {
-        lock (m_Lock) m_List.Add(new RawClick { kind = 4, wheel = wheel });
+        lock (m_Lock) m_List.Add(new RawClick
+        {
+        	kind = 4, wheel = wheel
+        }
+        );
     }
 
     public void EnqueueForceRelease()
     {
-        lock (m_Lock) m_List.Add(new RawClick { kind = 5 });
+        lock (m_Lock) m_List.Add(new RawClick
+        {
+        	kind = 5
+        }
+        );
     }
 
     public int Count
     {
-        get { lock (m_Lock) return m_List.Count; }
+        get
+        {
+        	lock (m_Lock) return m_List.Count;
+        }
     }
 
     /// <summary>从队列取出一个事件（非阻塞）。没有则返回 false。</summary>
@@ -69,7 +92,10 @@ public class WallpaperClickQueue
     {
         lock (m_Lock)
         {
-            if (m_List.Count > 0) { item = m_List[0]; m_List.RemoveAt(0); return true; }
+            if (m_List.Count > 0)
+            {
+            	item = m_List[0]; m_List.RemoveAt(0); return true;
+            }
         }
         item = default(RawClick);
         return false;

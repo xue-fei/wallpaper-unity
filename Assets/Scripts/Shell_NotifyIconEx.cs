@@ -101,7 +101,7 @@ public class Shell_NotifyIconEx
         }
 
         // 提示的超时值（几秒后自动消失）和版本
-        //nData.uTimeoutAndVersion = 10 * 1000 | NOTIFYICON_VERSION; 
+        //nData.uTimeoutAndVersion = 10 * 1000 | NOTIFYICON_VERSION;
         // 类型标志，有INFO、WARNING、ERROR，更改此值将影响气泡提示框的图标类型
         nData.dwInfoFlags = NIIF_INFO;
 
