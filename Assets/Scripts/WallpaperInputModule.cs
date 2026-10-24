@@ -26,6 +26,13 @@ public class WallpaperInputModule : StandaloneInputModule
     public int RaycastHitCount; // raycast 命中的元素数
     public string LastHitName = "无";
 
+    // 双击判定状态：维护 PointerEventData.clickCount，使 UI 可用 eventData.clickCount == 2 识别双击
+    private GameObject m_LastClickGO;
+    private float m_LastClickTime = -10f;
+    private Vector2 m_LastClickPos = Vector2.zero;
+    private const float DOUBLE_CLICK_SEC = 0.5f;   // 双击时间窗（秒），接近系统默认，可按需调整
+    private const float DOUBLE_CLICK_DIST = 10f;   // 双击位置容差（像素）
+
     public void BindQueue(WallpaperClickQueue queue) { m_Queue = queue; }
 
     /// <summary>
@@ -83,6 +90,10 @@ public class WallpaperInputModule : StandaloneInputModule
         // 队列为空（如编辑器下未绑定）时退回默认处理，避免破坏其它输入
         if (m_Queue == null) { base.Process(); return; }
 
+        // 预建左键指针(-1)：保证鼠标一移动即触发 hover。
+        // 否则 m_Pointers 为空时移动事件不会被任何指针消费，导致「首次点击/滚动前 hover 不生效」。
+        GetPointer(-1);
+
         WallpaperClickQueue.RawClick ev;
         while (m_Queue.TryDequeue(out ev))
         {
@@ -90,7 +101,7 @@ public class WallpaperInputModule : StandaloneInputModule
             {
                 case 0: // 移动：更新所有指针位置 + hover/拖拽
                 {
-                    // 直接用客户区像素坐标（Y 向下），与 Unity Screen 坐标一致。
+                    // 坐标为已翻转的 Unity 屏幕坐标（Y 向上，左下原点），与 Screen 一致。
                     // GraphicRaycaster 内部走 ScreenToViewportPoint(eventPosition)，
                     // 因此必须传真实屏幕像素坐标，不能传归一化值。
                     Vector2 pos = new Vector2(ev.px, ev.py);
@@ -187,6 +198,23 @@ public class WallpaperInputModule : StandaloneInputModule
         var clickable = FindClickableTarget(pointer);
         if (clickable != null)
         {
+            // 维护 clickCount：同目标 + 时间窗内 + 位置接近 → 累加，否则归 1。
+            // 使 UI 的 OnPointerClick(PointerEventData e) 可用 e.clickCount == 2 判双击。
+            float now = Time.unscaledTime;
+            if (m_LastClickGO == clickable
+                && (now - m_LastClickTime) <= DOUBLE_CLICK_SEC
+                && Vector2.Distance(m_LastClickPos, pointer.position) <= DOUBLE_CLICK_DIST)
+            {
+                pointer.clickCount++;
+            }
+            else
+            {
+                pointer.clickCount = 1;
+            }
+            m_LastClickGO = clickable;
+            m_LastClickTime = now;
+            m_LastClickPos = pointer.position;
+
             pointer.pointerPress = clickable;
 
             // 初始化潜在拖拽，并记下拖拽目标

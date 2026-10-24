@@ -114,15 +114,15 @@ public class WallpaperController : MonoBehaviour
             int width, height;
             User32.GetVirtualScreenSize(out width, out height);
             Screen.SetResolution(width, height, false);
-            Application.targetFrameRate = 60;
+            Application.targetFrameRate = 30;
         }
         catch (Exception e) { Debug.Log("警告: 分辨率设置失败 " + e.Message); }
 
         try { SetupDemoUI(); }
         catch (Exception e) { Debug.Log("警告: 演示 UI 装配失败 " + e.Message); }
 
-        try { DisableDecorativeRaycast(); }
-        catch (Exception e) { Debug.Log("警告: 装饰层 raycast 关闭失败 " + e.Message); }
+        //try { DisableDecorativeRaycast(); }
+        //catch (Exception e) { Debug.Log("警告: 装饰层 raycast 关闭失败 " + e.Message); }
 
         try { SetupDebugText(); }
         catch (Exception e) { Debug.Log("警告: 调试文本创建失败 " + e.Message); }
@@ -449,9 +449,11 @@ public class WallpaperController : MonoBehaviour
                 return User32.CallNextHookEx(s_HookId, nCode, wParam, lParam);
             }
 
-            // 换算到本窗口客户区像素坐标（Y 向下，与 Unity Screen 坐标一致）。
+            // 换算到本窗口客户区像素坐标。
             // GraphicRaycaster 用 ScreenToViewportPoint(eventPosition) 做射线，
             // 因此必须传【真实屏幕像素坐标】，不能传归一化值（DPI/参考分辨率不同会整体偏移）。
+            // 注意：GDI 客户区坐标是 Y 向下（左上原点），而 Unity 屏幕坐标是 Y 向上（左下原点），
+            // 两者方向相反，故下方对 Y 做翻转，否则传入 Unity 的位置会上下镜像。
             User32.RECT client;
             User32.GetClientRect(s_UnityWindowStatic, out client);
             User32.POINT cp = screen;
@@ -463,6 +465,9 @@ public class WallpaperController : MonoBehaviour
             if (px < 0) px = 0; if (py < 0) py = 0;
             if (px > client.right) px = client.right;
             if (py > client.bottom) py = client.bottom;
+
+            // GDI→Unity 坐标方向转换：Y 轴翻转（client.bottom 即客户区高度）
+            py = client.bottom - py;
 
             switch (msg)
             {
