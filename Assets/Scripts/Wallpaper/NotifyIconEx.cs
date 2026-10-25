@@ -1,13 +1,12 @@
 ﻿using System;
 using System.Runtime.InteropServices;
-using System.Text;
 
 /// <summary>
 /// 任务栏托盘图标封装。底层 P/Invoke（Shell_NotifyIcon / ExtractAssociatedIcon / LoadIcon）
 /// 与 NOTIFYICONDATA 结构体已统一收归 User32.cs，本类只保留托盘逻辑与常量。
 /// https://www.codeproject.com/articles/4972/shell-notifyiconex-with-balloon-tooltip
 /// </summary>
-public class Shell_NotifyIconEx
+public class NotifyIconEx
 {
     // 注意:此组件由于重点在气泡提示，它要求Shell32.dll 5.0(ie 5.0) 以上
 
@@ -21,12 +20,12 @@ public class Shell_NotifyIconEx
     // 这是菜单的句柄（当前实例有效，可多个icon 不冲突）
     internal IntPtr contextMenuHwnd = IntPtr.Zero;
 
-    public Shell_NotifyIconEx(IntPtr windHandle) // 构造
+    public NotifyIconEx(IntPtr windHandle) // 构造
     {
         formTmpHwnd = windHandle;
     }
 
-    ~Shell_NotifyIconEx()
+    ~NotifyIconEx()
     {
         if (forgetDelNotifyBox)
             this.DelNotifyBox(); //如果开发者忘记则清理icon

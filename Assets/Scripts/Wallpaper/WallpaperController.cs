@@ -4,7 +4,7 @@ using System.Text;
 using System.Runtime.InteropServices;
 using UnityEngine;
 using UnityEngine.EventSystems;
-using UnityEngine.UI;
+using System.Threading;
 
 /// <summary>
 /// 纯 C# 壁纸控制器（无原生 DLL、无注入 Explorer）。
@@ -67,11 +67,7 @@ public class WallpaperController : MonoBehaviour
     private WallpaperInputModule m_InputModule;
     private WallpaperClickQueue m_Queue = new WallpaperClickQueue();
 
-    // 演示 UI（点击计数 + 状态）
-    private Text m_StatusText;
-    private Button m_DemoButton;
-    private int m_ClickCount;
-    private float m_DebugTimer;
+    // 演示/调试 UI 已抽离到 WallpaperDemoUI（UI 层），本类只保留壁纸引擎职责
 
     // 钩子（静态，便于回调访问）
     private static WallpaperController s_Instance;
@@ -106,7 +102,7 @@ public class WallpaperController : MonoBehaviour
         }
         catch (Exception e)
         {
-        	Debug.Log("警告: 托盘初始化失败 " + e.Message);
+            Debug.Log("警告: 托盘初始化失败 " + e.Message);
         }
 
         // 各步骤独立容错：任何一步异常都【不能】中断后续挂载。
@@ -121,28 +117,7 @@ public class WallpaperController : MonoBehaviour
         }
         catch (Exception e)
         {
-        	Debug.Log("警告: 分辨率设置失败 " + e.Message);
-        }
-
-        try
-        {
-        	SetupDemoUI();
-        }
-        catch (Exception e)
-        {
-        	Debug.Log("警告: 演示 UI 装配失败 " + e.Message);
-        }
-
-        //try { DisableDecorativeRaycast(); }
-        //catch (Exception e) { Debug.Log("警告: 装饰层 raycast 关闭失败 " + e.Message); }
-
-        try
-        {
-        	SetupDebugText();
-        }
-        catch (Exception e)
-        {
-        	Debug.Log("警告: 调试文本创建失败 " + e.Message);
+            Debug.Log("警告: 分辨率设置失败 " + e.Message);
         }
 
         Debug.Log("WallpaperController 启动 Unity=" + Application.unityVersion
@@ -194,7 +169,7 @@ public class WallpaperController : MonoBehaviour
         EventSystem es = EventSystem.current ?? FindObjectOfType<EventSystem>();
         if (es == null)
         {
-        	Debug.Log("错误: 场景中缺少 EventSystem"); return;
+            Debug.Log("错误: 场景中缺少 EventSystem"); return;
         }
         StandaloneInputModule existing = es.GetComponent<StandaloneInputModule>();
         if (existing != null && !(existing is WallpaperInputModule)) Destroy(existing);
@@ -203,6 +178,29 @@ public class WallpaperController : MonoBehaviour
         m_InputModule.BindQueue(m_Queue);
         es.UpdateModules();   // 必须：把新模块注册进 EventSystem 的模块列表，否则 Process() 不会被调用
         Debug.Log("输入模块已装配: " + (m_InputModule != null ? m_InputModule.GetType().Name : "null"));
+    }
+
+    // ============================================================================
+    // 对外只读计数（供 WallpaperDemoUI 显示，不暴露内部可变状态）
+    // ============================================================================
+    public static bool IsHookInstalled()
+    {
+        return s_HookId != IntPtr.Zero;
+    }
+
+    public static int FedMoves
+    {
+        get { return s_FedMoves; }
+    }
+
+    public static int FedDowns
+    {
+        get { return s_FedDowns; }
+    }
+
+    public int InputQueueCount
+    {
+        get { return (m_Queue != null) ? m_Queue.Count : 0; }
     }
 
     // ============================================================================
@@ -222,7 +220,7 @@ public class WallpaperController : MonoBehaviour
             Debug.LogError("[Wallpaper] 挂接桌面异常 " + e.Message);
             try
             {
-            	RestoreToWindow();
+                RestoreToWindow();
             }
             catch
             {
@@ -232,8 +230,10 @@ public class WallpaperController : MonoBehaviour
 
     void AttachToDesktopCore()
     {
-        if (unityWindow == IntPtr.Zero) return;
-
+        if (unityWindow == IntPtr.Zero)
+        {
+            return;
+        }
         originalParent = User32.GetParent(unityWindow);
         originalExStyle = User32.GetWindowLong(unityWindow, GWL_EXSTYLE);
         originalStyle = User32.GetWindowLong(unityWindow, GWL_STYLE);
@@ -243,7 +243,7 @@ public class WallpaperController : MonoBehaviour
         IntPtr progman = User32.FindWindow("Progman", null);
         if (progman == IntPtr.Zero)
         {
-        	Debug.Log("错误: 未找到 Progman"); User32.ShowWindow(unityWindow, SW_SHOW); return;
+            Debug.Log("错误: 未找到 Progman"); User32.ShowWindow(unityWindow, SW_SHOW); return;
         }
 
         // Explorer 的 PID = Progman 的 PID（用于过滤「属于 Explorer」的 WorkerW）
@@ -262,7 +262,7 @@ public class WallpaperController : MonoBehaviour
             for (int retry = 0; retry < 2 && workerW == IntPtr.Zero; retry++)
             {
                 Debug.Log("未找到壁纸层 WorkerW，第 " + (retry + 1) + " 次重试 Spawn 0x052C");
-                System.Threading.Thread.Sleep(400);
+                Thread.Sleep(400);
                 SpawnWallpaperWorkerW(progman);
                 workerW = FindWallpaperWorkerW(progman);
             }
@@ -304,7 +304,7 @@ public class WallpaperController : MonoBehaviour
         int fillH = parentClient.bottom - parentClient.top;
         if (fillW <= 0 || fillH <= 0)
         {
-        	fillW = Screen.width; fillH = Screen.height;
+            fillW = Screen.width; fillH = Screen.height;
         }
 
         // 5) 沉底 + 铺满全屏
@@ -385,7 +385,7 @@ public class WallpaperController : MonoBehaviour
     {
         if (s_Instance != null && s_Instance.IsWallpaperWorkerW(hWnd))
         {
-        	s_FoundWorkerW = hWnd; return false;
+            s_FoundWorkerW = hWnd; return false;
         }
         return true;
     }
@@ -395,7 +395,7 @@ public class WallpaperController : MonoBehaviour
     {
         if (s_Instance != null && s_Instance.IsWallpaperWorkerW(hWnd))
         {
-        	s_FoundWorkerW = hWnd; return false;
+            s_FoundWorkerW = hWnd; return false;
         }
         return true;
     }
@@ -407,13 +407,13 @@ public class WallpaperController : MonoBehaviour
         User32.EnumWindows(new User32.EnumWindowsProc(EnumWorkerWProc), IntPtr.Zero);
         if (s_FoundWorkerW != IntPtr.Zero)
         {
-        	Debug.Log("已定位壁纸层 WorkerW（顶层）"); return s_FoundWorkerW;
+            Debug.Log("已定位壁纸层 WorkerW（顶层）"); return s_FoundWorkerW;
         }
         // 2) Progman 的直接子窗口（Win11 raised desktop）
         User32.EnumChildWindows(progman, new User32.EnumChildProc(EnumProgmanChildProc), IntPtr.Zero);
         if (s_FoundWorkerW != IntPtr.Zero)
         {
-        	Debug.Log("已定位壁纸层 WorkerW（Progman 子窗口）"); return s_FoundWorkerW;
+            Debug.Log("已定位壁纸层 WorkerW（Progman 子窗口）"); return s_FoundWorkerW;
         }
         return IntPtr.Zero;
     }
@@ -423,10 +423,13 @@ public class WallpaperController : MonoBehaviour
     // ============================================================================
     void InstallMouseHook()
     {
-        if (s_HookId != IntPtr.Zero) return;
+        if (s_HookId != IntPtr.Zero)
+        {
+            return;
+        }
         s_MouseProc = MouseHookCallback;
         m_HookThreadRunning = true;
-        m_HookThread = new System.Threading.Thread(HookThreadProc);
+        m_HookThread = new Thread(HookThreadProc);
         m_HookThread.IsBackground = true;
         m_HookThread.Name = "WallpaperMouseHook";
         m_HookThread.Start();
@@ -501,7 +504,7 @@ public class WallpaperController : MonoBehaviour
                 // 落在非桌面窗口上（如浏览器）：不喂事件，强制释放可能卡住的按键
                 if (s_AnyButtonHeld)
                 {
-                	s_QueueStatic.EnqueueForceRelease(); s_AnyButtonHeld = false;
+                    s_QueueStatic.EnqueueForceRelease(); s_AnyButtonHeld = false;
                 }
                 return User32.CallNextHookEx(s_HookId, nCode, wParam, lParam);
             }
@@ -624,129 +627,18 @@ public class WallpaperController : MonoBehaviour
     void OnDestroy()
     {
         UninstallMouseHook();
-        if (m_NotifyIconItem != null) m_NotifyIconItem.Dispose();
-    }
-
-    // ============================================================================
-    // 演示 UI（点击计数 + 状态文本）—— 用于直观验证“按钮点击正常”
-    // ============================================================================
-    void SetupDemoUI()
-    {
-        GameObject btn = GameObject.Find("Button");
-        if (btn == null)
+        if (m_NotifyIconItem != null)
         {
-        	Debug.Log("警告: 未找到名为 Button 的对象"); return;
+            m_NotifyIconItem.Dispose();
         }
-
-        m_DemoButton = btn.GetComponent<Button>();
-        if (m_DemoButton == null)
-        {
-        	Debug.Log("警告: Button 上缺少 Button 组件"); return;
-        }
-        m_DemoButton.onClick.AddListener(OnDemoButtonClicked);
-    }
-
-    /// <summary>
-    /// 让纯装饰性 UI 不参与 raycast。
-    /// 场景里的 Text(637×129, RootOrder 2) 完全遮挡 Button(160×30, RootOrder 1)，
-    /// 会把点击吃掉（日志实测 upHandler=无 → 点击永不触发）。
-    /// 装饰层设为 raycastTarget=false 后，射线可穿透到 Button。
-    ///
-    /// 注意：必须排除所有【交互控件】（Button / InputField / Selectable），
-    /// 否则会连带破坏输入框等本来可用的控件。
-    /// </summary>
-    void DisableDecorativeRaycast()
-    {
-        Canvas canvas = FindObjectOfType<Canvas>();
-        if (canvas == null) return;
-        foreach (var g in canvas.GetComponentsInChildren<Graphic>(true))
-        {
-            if (g == null) continue;
-            var go = g.gameObject;
-            // 交互控件：Button、InputField 及其子项（Selectable 基类）一律保留
-            if (go.GetComponent<Selectable>() != null) continue;
-            g.raycastTarget = false;
-        }
-        Debug.Log("装饰层 raycast 已关闭（交互控件保留）");
-    }
-
-    void OnDemoButtonClicked()
-    {
-        m_ClickCount++;
-    }
-
-    void SetupDebugText()
-    {
-        Canvas canvas = FindObjectOfType<Canvas>();
-        if (canvas == null)
-        {
-        	Debug.Log("警告: 未找到 Canvas，调试文本不显示"); return;
-        }
-
-        GameObject go = new GameObject("WallpaperDebugText");
-        go.transform.SetParent(canvas.transform, false);
-
-        RectTransform rt = go.AddComponent<RectTransform>();
-        rt.anchorMin = new Vector2(0f, 1f);
-        rt.anchorMax = new Vector2(0f, 1f);
-        rt.pivot = new Vector2(0f, 1f);
-        rt.anchoredPosition = new Vector2(12f, -12f);
-        rt.sizeDelta = new Vector2(460f, 150f);
-
-        // 底板必须是【独立子节点】：Image 与 Text 都是 Graphic 子类，
-        // Unity 限制「一个 GameObject 只能有一个 Graphic 组件」，
-        // 同一节点上加 Image 再 AddComponent<Text> 会抛异常并中断 Start()（挂载全部失效）。
-        GameObject bgGo = new GameObject("DebugBackground");
-        bgGo.transform.SetParent(go.transform, false);
-        RectTransform bgRt = bgGo.AddComponent<RectTransform>();
-        bgRt.anchorMin = Vector2.zero;
-        bgRt.anchorMax = Vector2.one;
-        bgRt.offsetMin = Vector2.zero;
-        bgRt.offsetMax = Vector2.zero;
-        Image bg = bgGo.AddComponent<Image>();
-        bg.color = new Color(0f, 0f, 0f, 0.62f);
-        bg.raycastTarget = false;   // 底板不参与 raycast，避免干扰 UI 命中
-
-        Text t = go.AddComponent<Text>();
-        t.font = Resources.GetBuiltinResource<Font>("Arial.ttf");
-        t.fontSize = 22;
-        t.color = Color.white;
-        t.alignment = TextAnchor.UpperLeft;
-        t.horizontalOverflow = HorizontalWrapMode.Wrap;
-        t.verticalOverflow = VerticalWrapMode.Overflow;
-        t.raycastTarget = false;     // 调试文本不参与 raycast
-
-        // 描边（Outline 继承 BaseMeshEffect，不是 Graphic，可与 Text 共存）
-        Outline o = go.AddComponent<Outline>();
-        o.effectColor = new Color(0f, 0f, 0f, 1f);
-        o.effectDistance = new Vector2(1.5f, -1.5f);
-
-        t.text = "壁纸就绪";
-        m_StatusText = t;
     }
 
     void Update()
     {
         // 周期刷新窗口屏幕矩形（多屏/分辨率变化也能正确命中）
-        m_DebugTimer += Time.deltaTime;
-        if (m_DebugTimer >= 0.5f)
+        if (unityWindow != IntPtr.Zero)
         {
-            m_DebugTimer = 0f;
-            if (unityWindow != IntPtr.Zero) User32.GetWindowRect(unityWindow, out s_WindowScreenRect);
-            if (m_StatusText != null)
-            {
-                string hook = (s_HookId != IntPtr.Zero) ? "鼠标钩子: 已启用" : "鼠标钩子: 未启用";
-                string raycast = (m_InputModule != null)
-                    ? "\n按下:" + m_InputModule.PressCount + " 抬起:" + m_InputModule.ReleaseCount
-                      + "\n命中:" + m_InputModule.RaycastHitCount + " 点击:" + m_InputModule.ClickCount
-                      + "\n命中物:" + m_InputModule.LastHitName
-                    : "";
-                m_StatusText.text = hook
-                    + "\n按钮点击次数: " + m_ClickCount
-                    + "\n已喂事件 移动:" + s_FedMoves + " 按下:" + s_FedDowns
-                    + "\n队列剩余: " + m_Queue.Count
-                    + raycast;
-            }
+            User32.GetWindowRect(unityWindow, out s_WindowScreenRect);
         }
     }
 }

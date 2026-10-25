@@ -7,7 +7,7 @@ using UnityEngine;
 public class NotifyIconItem
 {
     private static IntPtr m_HWnd;
-    private Shell_NotifyIconEx m_NotifyIcon;
+    private NotifyIconEx m_NotifyIcon;
 
     public IntPtr HWnd => m_HWnd;
 
@@ -21,10 +21,7 @@ public class NotifyIconItem
     public void Init()
     {
         InitWndProc();
-        CreateNotifyIcon();
-        //#if !UNITY_EDITOR && UNITY_EDITOR_WIN
-        //            User32.ShowWindowAsync(m_HWnd, User32.SW_HIDE);
-        //#endif
+        CreateNotifyIcon(); 
     }
 
     public void Dispose()
@@ -36,14 +33,18 @@ public class NotifyIconItem
     private void CreateNotifyIcon()
     {
         if (m_HWnd == IntPtr.Zero)
+        {
             return;
+        }
         DirectoryInfo assetData = new DirectoryInfo(Application.dataPath);
         if (assetData.Parent == null)
+        {
             return;
+        }
         var exeFilePath = $"{assetData.Parent.FullName}\\{Application.productName}.exe";
         StringBuilder exeFileSb = new StringBuilder(exeFilePath);
         IntPtr iconPtr = User32.ExtractAssociatedIcon(m_HWnd, exeFileSb, out ushort uIcon);
-        m_NotifyIcon = new Shell_NotifyIconEx(m_HWnd);
+        m_NotifyIcon = new NotifyIconEx(m_HWnd);
         int state = m_NotifyIcon.AddNotifyBox(iconPtr, "Unity壁纸程序", Application.productName, $"Unity壁纸程序已启动");
         if (state <= 0)
         {
@@ -101,10 +102,10 @@ public class NotifyIconItem
                     return IntPtr.Zero;
             }
         }
-        else if (msg == Shell_NotifyIconEx.WM_NOTIFY_TRAY)
+        else if (msg == NotifyIconEx.WM_NOTIFY_TRAY)
         {
             // 任务栏菜单图标事件
-            if ((int)wParam == Shell_NotifyIconEx.uID)
+            if ((int)wParam == NotifyIconEx.uID)
             {
                 switch ((int)lParam)
                 {
