@@ -124,36 +124,37 @@ public class WallpaperController : MonoBehaviour
             + " 分辨率=" + Screen.width + "x" + Screen.height
             + " dataPath=" + Application.dataPath);
 
-#if !UNITY_EDITOR
-        // 输入模块 + 挂接：失败也不能让窗口停留在「全屏普通顶层窗口」状态
-        try
+        if (Application.platform != RuntimePlatform.WindowsEditor)
         {
-        	SetupInputModule();
-        }
-        catch (Exception e)
-        {
-        	Debug.Log("错误: 输入模块装配异常 " + e.Message);
-        }
+            // 输入模块 + 挂接：失败也不能让窗口停留在「全屏普通顶层窗口」状态
+            try
+            {
+                SetupInputModule();
+            }
+            catch (Exception e)
+            {
+                Debug.Log("错误: 输入模块装配异常 " + e.Message);
+            }
 
-        try
-        {
-            unityWindow = AcquireUnityWindow();
-        }
-        catch (Exception e)
-        {
-        	Debug.Log("错误: 获取窗口句柄异常 " + e.Message);
-        }
+            try
+            {
+                unityWindow = AcquireUnityWindow();
+            }
+            catch (Exception e)
+            {
+                Debug.Log("错误: 获取窗口句柄异常 " + e.Message);
+            }
 
-        if (unityWindow == IntPtr.Zero)
-        {
-            Debug.Log("错误: 无法获取 Unity 窗口句柄，保持窗口模式");
+            if (unityWindow == IntPtr.Zero)
+            {
+                Debug.Log("错误: 无法获取 Unity 窗口句柄，保持窗口模式");
+            }
+            else
+            {
+                s_UnityWindowStatic = unityWindow;
+                Invoke("AttachToDesktop", 0.1f);
+            }
         }
-        else
-        {
-            s_UnityWindowStatic = unityWindow;
-            Invoke("AttachToDesktop", 0.1f);
-        }
-#endif
     }
 
     IntPtr AcquireUnityWindow()
@@ -172,9 +173,15 @@ public class WallpaperController : MonoBehaviour
             Debug.Log("错误: 场景中缺少 EventSystem"); return;
         }
         StandaloneInputModule existing = es.GetComponent<StandaloneInputModule>();
-        if (existing != null && !(existing is WallpaperInputModule)) Destroy(existing);
+        if (existing != null && !(existing is WallpaperInputModule))
+        {
+            Destroy(existing);
+        }
         m_InputModule = es.GetComponent<WallpaperInputModule>();
-        if (m_InputModule == null) m_InputModule = es.gameObject.AddComponent<WallpaperInputModule>();
+        if (m_InputModule == null)
+        {
+            m_InputModule = es.gameObject.AddComponent<WallpaperInputModule>();
+        }
         m_InputModule.BindQueue(m_Queue);
         es.UpdateModules();   // 必须：把新模块注册进 EventSystem 的模块列表，否则 Process() 不会被调用
         Debug.Log("输入模块已装配: " + (m_InputModule != null ? m_InputModule.GetType().Name : "null"));
