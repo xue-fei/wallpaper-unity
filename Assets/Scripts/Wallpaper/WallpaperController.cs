@@ -113,6 +113,9 @@ public class WallpaperController : MonoBehaviour
             int width, height;
             User32.GetVirtualScreenSize(out width, out height);
             Screen.SetResolution(width, height, false);
+            // vSyncCount > 0 时 Unity 会完全忽略 targetFrameRate，
+            // 必须显式清零，否则 144Hz 屏上会跑 72fps（vSync=2），GPU 白烧 2.4 倍。
+            QualitySettings.vSyncCount = 0;
             Application.targetFrameRate = 30;
         }
         catch (Exception e)
