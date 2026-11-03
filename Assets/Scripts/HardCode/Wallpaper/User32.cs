@@ -12,6 +12,14 @@ public class User32
     [DllImport("user32.dll")]
     public static extern IntPtr FindWindow(string lpClassName, string lpWindowName);
 
+    // 通过 Shell 启动程序（Process.Start 失败时的备用通道）
+    // 返回值 > 32 表示成功；<= 32 是 SE_ERR_* 错误码
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+    public static extern IntPtr ShellExecute(IntPtr hwnd, string lpOperation,
+        string lpFile, string lpParameters, string lpDirectory, int nShowCmd);
+
+    public const int SW_SHOWNORMAL = 1;
+
     // 查找子窗口
     [DllImport("user32.dll")]
     public static extern IntPtr FindWindowEx(IntPtr parentHandle, IntPtr childAfter, string className, string windowTitle);
@@ -66,10 +74,115 @@ public class User32
     [DllImport("user32.dll", SetLastError = true)]
     public static extern uint GetWindowThreadProcessId(IntPtr hWnd, out uint lpdwProcessId);
 
+    // 打开进程句柄（存活守护用：等待 Explorer 进程退出）
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern IntPtr OpenProcess(uint dwDesiredAccess, bool bInheritHandle, uint dwProcessId);
+
+    // 等待内核对象（进程句柄在进程退出时变为 signaled）
+    [DllImport("kernel32.dll", SetLastError = true)]
+    public static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+    // 关闭内核对象句柄
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CloseHandle(IntPtr hObject);
+
+    // 句柄访问权限 / 等待常量
+    public const uint SYNCHRONIZE = 0x00100000;
+    public const uint INFINITE = 0xFFFFFFFF;
+    public const uint WAIT_TIMEOUT = 0x00000102;   // WaitForSingleObject：超时（对象仍处于未触发状态）
+
+    // ---------------------------------------------------------------------------------
+    // CreateProcess：IL2CPP 下唯一可靠的「创建进程」方式。
+    //   为什么不用 System.Diagnostics.Process：
+    //     打包(IL2CPP)后 Process.Start 无论 UseShellExecute=true/false 都抛
+    //     Win32Exception("Native error= Success")，异常里 CommandLine='' 为空，
+    //     说明托管侧构造命令行失败，根本没走到 Win32 CreateProcess。
+    //   为什么不用 ShellExecute：
+    //     它要经过 Shell（Explorer）做关联/动词解析，Explorer 重启瞬间 Shell 处于
+    //     过渡状态，实测返回 42 但进程并未真正创建（没有日志轮转）。
+    // ---------------------------------------------------------------------------------
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct STARTUPINFO
+    {
+        public int cb;
+        public string lpReserved;
+        public string lpDesktop;
+        public string lpTitle;
+        public int dwX;
+        public int dwY;
+        public int dwXSize;
+        public int dwYSize;
+        public int dwXCountChars;
+        public int dwYCountChars;
+        public int dwFillAttribute;
+        public int dwFlags;
+        public short wShowWindow;
+        public short cbReserved2;
+        public IntPtr lpReserved2;
+        public IntPtr hStdInput;
+        public IntPtr hStdOutput;
+        public IntPtr hStdError;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct PROCESS_INFORMATION
+    {
+        public IntPtr hProcess;
+        public IntPtr hThread;
+        public int dwProcessId;
+        public int dwThreadId;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool CreateProcess(
+        string lpApplicationName,     // 可执行文件完整路径；为 null 时从 lpCommandLine 解析
+        string lpCommandLine,         // 命令行；lpApplicationName 非 null 时可传 null
+        IntPtr lpProcessAttributes,   // 进程安全属性，一般 IntPtr.Zero
+        IntPtr lpThreadAttributes,    // 线程安全属性，一般 IntPtr.Zero
+        bool bInheritHandles,         // 是否继承调用方的可继承句柄
+        uint dwCreationFlags,         // CREATE_* 标志
+        IntPtr lpEnvironment,         // 环境块；IntPtr.Zero = 继承调用方环境
+        string lpCurrentDirectory,    // 工作目录；null = 使用调用方当前目录
+        ref STARTUPINFO lpStartupInfo,
+        out PROCESS_INFORMATION lpProcessInformation);
+
+    // 让新进程脱离调用方所属的 Job Object。
+    // 若本进程处于带 JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE 的 Job 中，普通 CreateProcess
+    // 创建的子进程会随本进程退出被连带杀掉；加此标志可让子进程脱离 Job 独立存活。
+    // 注意：若该 Job 不允许 breakaway，CreateProcess 会返回 ERROR_ACCESS_DENIED，
+    // 调用方需退化为普通 CreateProcess（见 WallpaperController.TryCreateProcess）。
+    public const uint CREATE_BREAKAWAY_FROM_JOB = 0x01000000;
+
+    // 不为新进程创建控制台窗口（用于静默启动 cmd.exe，避免黑框一闪）
+    public const uint CREATE_NO_WINDOW = 0x08000000;
+
+    // STARTUPINFO.dwFlags：以下字段 wShowWindow 才生效
+    public const int STARTF_USESHOWWINDOW = 0x00000001;
+
+    // 获取当前进程 ID（用于生成"等待本进程退出"的启动器脚本）
+    [DllImport("kernel32.dll")]
+    public static extern uint GetCurrentProcessId();
+
+    // 当前进程伪句柄（-1），可直接用于 TerminateProcess
+    [DllImport("kernel32.dll")]
+    public static extern IntPtr GetCurrentProcess();
+
+    // 强制终止进程（不可被阻塞/拦截，退出码立即生效）
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool TerminateProcess(IntPtr hProcess, uint uExitCode);
+
     // 窗口是否可见（父窗口隐藏时子窗口 WS_VISIBLE 仍为 TRUE，必须用这个）
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     public static extern bool IsWindowVisible(IntPtr hWnd);
+
+    // 窗口句柄是否仍然有效（跨进程句柄可能已失效）
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool IsWindow(IntPtr hWnd);
 
     // 获取窗口类名
     [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)]

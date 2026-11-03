@@ -11,3 +11,6 @@ Build
 *.csproj
 Assets/StreamingAssets/build_info
 Assets/StreamingAssets/build_info.meta
+HybridCLRData/
+HybridCLRBuildCache/
+Assets/StreamingAssets/Code

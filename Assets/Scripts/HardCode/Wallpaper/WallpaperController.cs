@@ -86,6 +86,46 @@ public class WallpaperController : MonoBehaviour
     private volatile bool m_HookThreadRunning;
     private uint m_HookThreadId;
 
+    // 退出诊断：心跳日志计时器（每 10 秒输出一次运行状态）
+    private float m_HeartbeatTimer;
+    // 退出诊断：暂停状态（Unity 无 Application.isPaused 静态属性，只能由回调记录）
+    private bool m_IsPaused;
+
+    // 存活守护：用户主动退出 / 系统关机 时不自动重启
+    public bool UserRequestedQuit { get; private set; }
+    private static bool s_SystemShutdown;
+    public bool IsSystemShuttingDown => s_SystemShutdown;
+
+    // 存活守护：后台线程等待 Explorer 进程句柄，Explorer 重启/崩溃时自动拉起新实例。
+    // 【重要】Explorer 重启会销毁 WorkerW 子树，而 DestroyWindow 会【递归销毁子窗口】，
+    // 所以本进程的 Unity 窗口（WorkerW 的子窗口）也会被一并销毁 —— 实测 isWindow=False。
+    // 因此无法在原进程内"重新挂接"（窗口已不存在），只能重启进程。
+    private System.Threading.Thread m_WatchdogThread;
+    private volatile bool m_WatchdogRunning;
+    private volatile bool m_SelfTerminate;
+
+    // 原子标记：保证“只重启一次”，防止看门狗线程与 WM_DESTROY 路径重复拉起新实例
+    private static int s_RelaunchedFlag;
+    public static bool TryMarkRelaunched()
+    {
+        return System.Threading.Interlocked.CompareExchange(ref s_RelaunchedFlag, 1, 0) == 0;
+    }
+
+    /// <summary>
+    /// 请求本进程在创建独立启动器后自行退出。
+    /// 【为什么必须退出】新实例在本进程仍存活时无法完成 Unity 引擎初始化（会被完全阻塞），
+    /// 所以重启时序必须是「旧进程先退出 → 启动器再拉起新实例」。
+    /// Update() 检测到本标志后会 Application.Quit()，并在 1 秒后 Environment.Exit(0) 兜底。
+    /// </summary>
+    public void RequestSelfTerminate()
+    {
+        if (!m_SelfTerminate)
+        {
+            Debug.Log("[ExitTrace] 收到自退出请求：独立启动器已就位，本进程将退出");
+            m_SelfTerminate = true;
+        }
+    }
+
     // ============================================================================
     // 生命周期
     // ============================================================================
@@ -158,6 +198,8 @@ public class WallpaperController : MonoBehaviour
                 Invoke("AttachToDesktop", 0.1f);
             }
         }
+
+        Debug.Log("[ExitTrace] Start 完成，进入正常运行（心跳日志每 10 秒输出一次）");
     }
 
     IntPtr AcquireUnityWindow()
@@ -247,6 +289,10 @@ public class WallpaperController : MonoBehaviour
         originalParent = User32.GetParent(unityWindow);
         originalExStyle = User32.GetWindowLong(unityWindow, GWL_EXSTYLE);
         originalStyle = User32.GetWindowLong(unityWindow, GWL_STYLE);
+        Debug.Log("[Reattach] AttachToDesktopCore 开始 parent=" + originalParent
+            + " style=0x" + originalStyle.ToString("X8")
+            + " visible=" + User32.IsWindowVisible(unityWindow)
+            + " isWindow=" + User32.IsWindow(unityWindow));
 
         User32.ShowWindow(unityWindow, SW_HIDE);
 
@@ -304,7 +350,12 @@ public class WallpaperController : MonoBehaviour
         User32.SetWindowLong(unityWindow, GWL_EXSTYLE, ex);
 
         // 4) 挂到壁纸层 WorkerW（该层在图标之下、默认壁纸图之上）。
-        User32.SetParent(unityWindow, workerW);
+        bool setParentOk = User32.SetParent(unityWindow, workerW);
+        Debug.Log("[Reattach] SetParent(" + unityWindow + ", " + workerW + ") 返回 "
+            + setParentOk + " err=" + Marshal.GetLastWin32Error()
+            + " IsWindow(workerW)=" + User32.IsWindow(workerW)
+            + " GetParent=" + User32.GetParent(unityWindow)
+            + " style=0x" + User32.GetWindowLong(unityWindow, GWL_STYLE).ToString("X8"));
 
         // 铺满目标取自壁纸层 WorkerW 的客户区尺寸（精确等于桌面覆盖区域，
         // 绕开分辨率/DPI 误差，单屏多屏都准确）。
@@ -333,6 +384,10 @@ public class WallpaperController : MonoBehaviour
             + " 窗口=" + unityWindow + " 屏幕矩形=" + s_WindowScreenRect.left + "," + s_WindowScreenRect.top
             + "," + s_WindowScreenRect.right + "," + s_WindowScreenRect.bottom
             + " Screen=" + Screen.width + "x" + Screen.height + " dpi=" + Screen.dpi);
+
+        // 挂接成功后启动 Explorer 存活守护：Explorer 重启会销毁 WorkerW 子树，
+        // 本进程随之退出，守护线程检测到 Explorer 退出即拉起新实例重新挂接。
+        StartExplorerWatchdog();
     }
 
     // 壁纸层 WorkerW 搜索结果（静态，供枚举回调使用）
@@ -618,12 +673,323 @@ public class WallpaperController : MonoBehaviour
 
     public void QuitApp()
     {
+        UserRequestedQuit = true;
+        Debug.Log("[ExitTrace] QuitApp 被调用（托盘菜单退出）t="
+            + Time.realtimeSinceStartup.ToString("F1") + "s");
         RestoreToWindow();
         Application.Quit(0);
     }
 
+    public void SetSystemShutdown()
+    {
+        s_SystemShutdown = true;
+    }
+
+    /// <summary>
+    /// 桌面重建(Explorer 重启 / 显示变化 / 锁屏解锁)时，本进程窗口(WorkerW 子窗口)会被 OS 销毁。
+    /// 此时自动拉起一个新实例继续挂接壁纸，而不是让壁纸消失。
+    /// 仅在「非用户主动退出、非系统关机」时生效；带防抖避免 Explorer 持续崩溃导致无限重启。
+    /// </summary>
+    public bool RelaunchSelf()
+    {
+        if (UserRequestedQuit || s_SystemShutdown) return false;
+        if (!ShouldRelaunchByBackoff()) return false;
+
+        try
+        {
+            System.Threading.Thread.Sleep(400); // 给 Explorer 一点时间重建桌面(WorkerW)
+            string exeDir = System.IO.Path.GetDirectoryName(Application.dataPath); // .../WallPaper
+            string exePath = System.IO.Path.Combine(exeDir, Application.productName + ".exe");
+            if (!System.IO.File.Exists(exePath))
+            {
+                Debug.LogWarning("[ExitTrace] 重启失败：找不到 " + exePath);
+                return false;
+            }
+            Debug.Log("[ExitTrace] 检测到桌面重建(Explorer重启/显示变化)，准备重启壁纸进程... path=" + exePath);
+
+            // 【关键时序】不能在本进程仍存活时启动新实例。
+            // 实测第二个 WallPaper 实例会被完全阻塞在 Unity 引擎初始化阶段
+            // （内存恒 ~21MB、CPU 时间不增长、无任何日志输出、窗口已创建但永不挂接），
+            // 旧进程若此时误判"新实例已稳定"而退出，壁纸将永久消失。
+            // 因此顺序必须是：本进程先退出 → 独立启动器检测到本进程消失 → 再拉起唯一的新实例。
+            int myPid = (int)User32.GetCurrentProcessId();
+            if (TrySpawnDetachedLauncher(exePath, myPid, out int launcherPid))
+            {
+                Debug.Log("[ExitTrace] 已创建独立启动器 PID=" + launcherPid
+                    + "（本进程退出后将自动拉起新实例）");
+                return true;
+            }
+
+            Debug.LogWarning("[ExitTrace] 独立启动器创建失败，壁纸未恢复！");
+            return false;
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[ExitTrace] 重启异常 " + e.GetType().FullName + ": " + e.Message);
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// 生成一个「等待本进程退出后再启动壁纸」的独立启动器并静默运行。
+    /// 为什么需要外部启动器：本进程必须先退出（否则新实例会卡在 Unity 引擎初始化），
+    /// 而退出后由谁去拉起新实例？答案是一个脱离 Job、不随本进程消亡的 cmd.exe。
+    /// 返回 true 表示启动器进程已成功创建。
+    /// </summary>
+    private bool TrySpawnDetachedLauncher(string exePath, int ownerPid, out int launcherPid)
+    {
+        launcherPid = 0;
+        try
+        {
+            // 1) 写临时脚本：轮询 tasklist，等 ownerPid 消失后再 start 新实例。
+            //    计数器用 !n! 延迟展开——括号块内 %n% 会取到进入块之前的旧值，永远为 0。
+            //    用 findstr 而非 find：部分环境（如沙箱/精简系统）find.exe 参数解析异常，恒返回错误码。
+            //    第二道 findstr 按镜像名过滤：防止 ownerPid 在极端情况下被其他进程复用导致空等。
+            //    超时(20s)仍存活则 taskkill 强杀旧进程——新实例与旧进程并存会卡在 Unity 引擎初始化，
+            //    所以必须确保旧进程真的消失后才能启动新实例（注意不能加 /T，否则会杀掉启动器自身）。
+            string cmdFile = System.IO.Path.Combine(
+                System.IO.Path.GetTempPath(), "wallpaper_relaunch_" + ownerPid + ".cmd");
+            string logFile = System.IO.Path.ChangeExtension(cmdFile, ".log");
+            string imgName = System.IO.Path.GetFileName(exePath);
+            string script =
+                "@echo off\r\n" +
+                "setlocal enabledelayedexpansion\r\n" +
+                "set n=0\r\n" +
+                ":wait_owner_exit\r\n" +
+                "tasklist /fi \"PID eq " + ownerPid + "\" /nh 2>nul | findstr \"" + ownerPid + "\" | findstr /i \"" + imgName + "\" >nul\r\n" +
+                "if not errorlevel 1 (\r\n" +
+                "  set /a n+=1\r\n" +
+                "  if !n! gtr 20 (\r\n" +
+                "    echo [!time!] force-kill owner " + ownerPid + " >> \"" + logFile + "\"\r\n" +
+                "    taskkill /F /PID " + ownerPid + " >nul 2>&1\r\n" +
+                "    timeout /t 2 /nobreak >nul\r\n" +
+                "    goto do_launch\r\n" +
+                "  )\r\n" +
+                "  timeout /t 1 /nobreak >nul\r\n" +
+                "  goto wait_owner_exit\r\n" +
+                ")\r\n" +
+                ":do_launch\r\n" +
+                "start \"\" \"" + exePath + "\"\r\n" +
+                "exit /b 0\r\n";
+            System.IO.File.WriteAllText(cmdFile, script);
+
+            // 2) CreateProcess 启动 cmd.exe /c "<脚本>"。
+            //    必须带 CREATE_BREAKAWAY_FROM_JOB，否则本进程退出（或 Job 关闭）时它被连带杀掉。
+            string cmdPath = System.IO.Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.System), "cmd.exe");
+            if (!System.IO.File.Exists(cmdPath))
+            {
+                Debug.LogWarning("[ExitTrace] 找不到 cmd.exe: " + cmdPath);
+                return false;
+            }
+
+            string cmdLine = "\"" + cmdPath + "\" /c \"\"" + cmdFile + "\"\"";
+
+            uint[] flags = {
+                User32.CREATE_BREAKAWAY_FROM_JOB | User32.CREATE_NO_WINDOW,
+                User32.CREATE_NO_WINDOW
+            };
+            string[] flagNames = { "BREAKAWAY|NO_WINDOW", "NO_WINDOW" };
+
+            for (int i = 0; i < flags.Length; i++)
+            {
+                User32.STARTUPINFO si = new User32.STARTUPINFO();
+                si.cb = Marshal.SizeOf(typeof(User32.STARTUPINFO));
+                if (si.cb <= 0) si.cb = 104;   // x64 下 STARTUPINFO 固定大小
+                si.dwFlags = User32.STARTF_USESHOWWINDOW;
+                si.wShowWindow = 0;             // SW_HIDE
+
+                User32.PROCESS_INFORMATION pi;
+                bool ok = User32.CreateProcess(
+                    null, cmdLine,
+                    IntPtr.Zero, IntPtr.Zero, false,
+                    flags[i], IntPtr.Zero, null,
+                    ref si, out pi);
+
+                if (ok)
+                {
+                    launcherPid = pi.dwProcessId;
+                    if (pi.hThread != IntPtr.Zero) User32.CloseHandle(pi.hThread);
+                    if (pi.hProcess != IntPtr.Zero) User32.CloseHandle(pi.hProcess);
+                    Debug.Log("[ExitTrace] 启动器创建成功(" + flagNames[i] + ") PID=" + launcherPid
+                        + " script=" + cmdFile);
+                    return true;
+                }
+
+                Debug.LogWarning("[ExitTrace] 启动器创建失败(" + flagNames[i] + ") err="
+                    + Marshal.GetLastWin32Error());
+            }
+
+            // 3) 备用：用 ShellExecute 打开同一个"等待脚本"（仍保证旧进程先退出）。
+            //    注意不能直接启动 exePath——那会让新实例与本进程并存，卡在 Unity 引擎初始化。
+            Debug.LogWarning("[ExitTrace] CreateProcess 均失败，尝试 ShellExecute 打开启动脚本...");
+            IntPtr r = User32.ShellExecute(IntPtr.Zero, "open", cmdFile, null, null, User32.SW_HIDE);
+            Debug.Log("[ExitTrace] ShellExecute(script) 返回 " + r);
+            if (r.ToInt64() > 32)
+            {
+                Debug.LogWarning("[ExitTrace] ShellExecute 已打开启动脚本（无法验证是否真正运行）");
+                return true;
+            }
+        }
+        catch (Exception e)
+        {
+            Debug.LogWarning("[ExitTrace] 启动器异常 " + e.GetType().Name + ": " + e.Message);
+        }
+        return false;
+    }
+
+    // 防抖：最近 60 秒内重启超过 5 次则放弃本次重启，避免 Explorer 持续崩溃导致无限重启
+    private bool ShouldRelaunchByBackoff()
+    {
+        try
+        {
+            string guard = System.IO.Path.Combine(System.IO.Path.GetTempPath(), "wallpaper_relaunch_guard.tmp");
+            var now = DateTime.Now;
+            var times = new System.Collections.Generic.List<DateTime>();
+            if (System.IO.File.Exists(guard))
+            {
+                foreach (var line in System.IO.File.ReadAllLines(guard))
+                {
+                    if (DateTime.TryParse(line, out var t)) times.Add(t);
+                }
+            }
+            times = times.FindAll(t => (now - t).TotalSeconds < 60);
+            times.Add(now);
+            System.IO.File.WriteAllLines(guard, times.ConvertAll(t => t.ToString("o")));
+            return times.Count <= 5;
+        }
+        catch
+        {
+            return true;
+        }
+    }
+
+    /// <summary>
+    /// 启动 Explorer 存活守护线程。挂接成功后调用一次。
+    /// 后台等待 Explorer 进程句柄：一旦 Explorer 重启/崩溃，线程等几秒让新 Explorer 起来后
+    /// 拉起一个新实例重新挂接壁纸。
+    /// 【为什么必须重启进程】Explorer 重启会销毁 WorkerW，而 DestroyWindow 会递归销毁子窗口，
+    /// 本进程的 Unity 窗口（WorkerW 子窗口）随之被销毁（实测 isWindow=False），
+    /// 原进程内已无窗口可挂，只能重启。
+    /// 用户主动退出 / 系统关机时不触发。
+    /// </summary>
+    private void StartExplorerWatchdog()
+    {
+        if (m_WatchdogRunning) return;
+        if (s_ExplorerPid == 0) return;
+
+        uint pid = s_ExplorerPid;
+        IntPtr hProc = User32.OpenProcess(User32.SYNCHRONIZE, false, pid);
+        if (hProc == IntPtr.Zero)
+        {
+            Debug.LogWarning("[Watchdog] 无法打开 Explorer 进程句柄(PID=" + pid + ")，跳过存活守护");
+            return;
+        }
+
+        m_WatchdogRunning = true;
+        m_WatchdogThread = new System.Threading.Thread(() =>
+        {
+            try
+            {
+                try { User32.WaitForSingleObject(hProc, User32.INFINITE); }
+                catch { }
+                User32.CloseHandle(hProc);
+                m_WatchdogRunning = false;
+
+                // Explorer 已退出：WorkerW 子树被销毁，本进程窗口也被递归销毁。
+                Debug.Log("[ExitTrace] [Watchdog] 检测到 Explorer 退出(PID=" + pid + ")，准备重启壁纸");
+
+                if (UserRequestedQuit || s_SystemShutdown)
+                {
+                    Debug.Log("[ExitTrace] [Watchdog] 用户主动退出/系统关机，不重启");
+                    return;
+                }
+                // 等几秒：让新 Explorer 起来（Progman / 任务栏重建）。
+                // 系统关机时不会重建，NewDesktopReady 返回 false，这里就不重启。
+                // 注意：WorkerW 由 0x052C 消息创建，Explorer 重启后不会自动出现，不能用它判断。
+                if (!NewDesktopReady(pid, 10000))
+                {
+                    Debug.Log("[ExitTrace] [Watchdog] 未发现新桌面（可能系统关机），不重启");
+                    return;
+                }
+                // 再等 2 秒，确保新 Explorer 完成桌面初始化（图标层建立后再 Spawn WorkerW）
+                System.Threading.Thread.Sleep(2000);
+                if (UserRequestedQuit || s_SystemShutdown)
+                {
+                    Debug.Log("[ExitTrace] [Watchdog] 等待期间用户退出/系统关机，取消重启");
+                    return;
+                }
+                // 窗口已被销毁，只能重启进程。
+                // 顺序：先由 RelaunchSelf 创建独立启动器，再让本进程退出（新实例必须等旧进程消失后才启动）
+                if (TryMarkRelaunched() && RelaunchSelf())
+                {
+                    m_SelfTerminate = true;
+                }
+                else
+                {
+                    // 重启失败：旧进程窗口已被销毁，无法恢复壁纸，但保留进程与托盘图标便于排查。
+                    Debug.LogWarning("[ExitTrace] [Watchdog] 自动重启失败，壁纸未恢复！");
+                }
+            }
+            catch (Exception e)
+            {
+                Debug.LogWarning("[ExitTrace] [Watchdog] 恢复流程异常 " + e.GetType().Name + ": " + e.Message);
+            }
+        });
+        m_WatchdogThread.IsBackground = true;
+        m_WatchdogThread.Start();
+        Debug.Log("[ExitTrace] [Watchdog] 已启动 Explorer 存活守护 (PID=" + pid + ")");
+    }
+
+    /// <summary>
+    /// 轮询等待「新版桌面就绪」。
+    /// Explorer 重启后：Progman 会重建（PID 变化）或任务栏 Shell_TrayWnd 重新出现。
+    /// 系统关机时：Explorer 退出且不再重建 → 返回 false。
+    /// 注意：WorkerW 由 0x052C 消息创建，Explorer 重启后不会自动出现，不能用它判断。
+    /// </summary>
+    private static bool NewDesktopReady(uint oldPid, int timeoutMs)
+    {
+        int elapsed = 0;
+        while (elapsed < timeoutMs)
+        {
+            // 1) Progman 存在且 PID 变化 → 新 Explorer 已启动
+            IntPtr progman = User32.FindWindow("Progman", null);
+            if (progman != IntPtr.Zero)
+            {
+                User32.GetWindowThreadProcessId(progman, out uint pid);
+                if (pid != 0 && pid != oldPid)
+                {
+                    return true;
+                }
+            }
+            // 2) 任务栏出现（Explorer 启动后创建）
+            if (User32.FindWindow("Shell_TrayWnd", null) != IntPtr.Zero)
+            {
+                return true;
+            }
+            System.Threading.Thread.Sleep(200);
+            elapsed += 200;
+        }
+        return false;
+    }
+
+    void OnApplicationFocus(bool hasFocus)
+    {
+        Debug.Log("[ExitTrace] OnApplicationFocus=" + hasFocus
+            + " t=" + Time.realtimeSinceStartup.ToString("F1") + "s");
+    }
+
+    void OnApplicationPause(bool pauseStatus)
+    {
+        m_IsPaused = pauseStatus;
+        Debug.Log("[ExitTrace] OnApplicationPause=" + pauseStatus
+            + " t=" + Time.realtimeSinceStartup.ToString("F1") + "s");
+    }
+
     void OnApplicationQuit()
     {
+        Debug.Log("[ExitTrace] OnApplicationQuit 被调用 t="
+            + Time.realtimeSinceStartup.ToString("F1") + "s frame=" + Time.frameCount);
         UninstallMouseHook();
         if (unityWindow != IntPtr.Zero)
         {
@@ -636,6 +1002,7 @@ public class WallpaperController : MonoBehaviour
 
     void OnDestroy()
     {
+        Debug.Log("[ExitTrace] OnDestroy 被调用");
         UninstallMouseHook();
         if (m_NotifyIconItem != null)
         {
@@ -645,6 +1012,35 @@ public class WallpaperController : MonoBehaviour
 
     void Update()
     {
+        if (m_SelfTerminate)
+        {
+            Debug.Log("[ExitTrace] [Watchdog] 旧进程主动退出，由新实例接管壁纸");
+            // 【关键】窗口已被 Explorer 销毁，实测 IL2CPP 下 Application.Quit() 会卡死：
+            // 进程在调用后仍长期存活（日志停在下一行、无 OnApplicationQuit/OnDestroy），
+            // 导致独立启动器一直空等、壁纸无法恢复。窗口已不存在，无需优雅退出，
+            // 直接硬终止本进程，让启动器立刻检测到并拉起新实例。
+            User32.TerminateProcess(User32.GetCurrentProcess(), 0);
+            // TerminateProcess 成功时不会返回；若失败（极少数情况），退化为 Environment.Exit
+            System.Environment.Exit(0);
+            return;
+        }
+
+        // 退出诊断：每 10 秒输出一次心跳，定位「运行一段时间后退出」的退出前最后状态
+        m_HeartbeatTimer += Time.unscaledDeltaTime;
+        if (m_HeartbeatTimer >= 10f)
+        {
+            m_HeartbeatTimer = 0f;
+            bool vis = unityWindow != IntPtr.Zero && User32.IsWindowVisible(unityWindow);
+            Debug.Log("[Heartbeat] t=" + Time.realtimeSinceStartup.ToString("F1")
+                + "s frame=" + Time.frameCount
+                + " windowVisible=" + vis
+                + " parent=" + User32.GetParent(unityWindow)
+                + " isFocused=" + Application.isFocused
+                + " isPaused=" + m_IsPaused
+                + " rect=" + s_WindowScreenRect.left + "," + s_WindowScreenRect.top
+                + "," + s_WindowScreenRect.right + "," + s_WindowScreenRect.bottom);
+        }
+
         // 周期刷新窗口屏幕矩形（多屏/分辨率变化也能正确命中）
         if (unityWindow != IntPtr.Zero)
         {

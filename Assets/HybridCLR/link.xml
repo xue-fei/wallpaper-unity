@@ -1,0 +1,3 @@
+<linker>
+	<assembly fullname="HardCode" preserve="all" />
+</linker>

@@ -84,6 +84,41 @@ public class NotifyIconItem
     [MonoPInvokeCallback]
     private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
+        // 退出诊断：记录退出/会话/显示相关的关键窗口消息（过滤高频消息，避免刷屏）
+        // 0x0002 WM_DESTROY / 0x0010 WM_CLOSE / 0x0011 WM_QUERYENDSESSION / 0x0016 WM_ENDSESSION
+        // 0x000B WM_SETTINGCHANGE / 0x001A WM_DISPLAYCHANGE / 0x0112 WM_SYSCOMMAND
+        if (msg == 0x0002 || msg == 0x0010 || msg == 0x0011 || msg == 0x0016
+            || msg == 0x000B || msg == 0x001A || msg == User32.WM_SYSCOMMAND)
+        {
+            Debug.Log("[ExitTrace] WndProc msg=0x" + msg.ToString("X4")
+                + " wParam=0x" + wParam.ToInt64().ToString("X")
+                + " lParam=0x" + lParam.ToInt64().ToString("X")
+                + " t=" + Time.realtimeSinceStartup.ToString("F1") + "s");
+        }
+
+        // 系统关机 / 会话结束：标记，避免后续 WM_DESTROY 触发自动重启
+        if (msg == 0x0011 || msg == 0x0016) // WM_QUERYENDSESSION / WM_ENDSESSION
+        {
+            if (Controller != null) Controller.SetSystemShutdown();
+        }
+        // 窗口被销毁：壁纸窗口是 Explorer 桌面(WorkerW)的子窗口，
+        // Explorer 重启 / 显示变化 / 锁屏解锁 会销毁它。
+        // 恢复交给看门狗线程统一处理（它会等几秒后拉起新实例），
+        // 这里用 TryMarkRelaunched 与看门狗互斥，确保只重启一次（看门狗失效时的冗余备份）。
+        if (msg == 0x0002) // WM_DESTROY
+        {
+            if (Controller != null && !Controller.UserRequestedQuit && !Controller.IsSystemShuttingDown)
+            {
+                // 新实例必须等本进程退出后才能启动（并存会导致新实例卡在 Unity 引擎初始化），
+                // 所以启动器创建成功后要主动让本进程退出。
+                if (WallpaperController.TryMarkRelaunched() && Controller.RelaunchSelf())
+                {
+                    Controller.RequestSelfTerminate();
+                }
+            }
+            return User32.CallWindowProc(m_OldWndProcPtr, hWnd, msg, wParam, lParam);
+        }
+
         if (msg == User32.WM_SYSCOMMAND)
         {
             // 屏蔽窗口顶部关闭最小化事件
@@ -145,6 +180,7 @@ public class NotifyIconItem
                     break;
                 case QuitID:
                     // 关闭（先解除壁纸挂接，再退出）
+                    Debug.Log("[ExitTrace] 托盘菜单点击「退出」");
                     if (Controller != null) Controller.QuitApp();
                     else Application.Quit(0);
                     break;
