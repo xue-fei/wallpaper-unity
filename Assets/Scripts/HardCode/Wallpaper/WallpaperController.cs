@@ -86,8 +86,11 @@ public class WallpaperController : MonoBehaviour
     private volatile bool m_HookThreadRunning;
     private uint m_HookThreadId;
 
-    // 退出诊断：心跳日志计时器（每 10 秒输出一次运行状态）
+    // 退出诊断：心跳计时器（每 60 秒输出一次运行状态）
     private float m_HeartbeatTimer;
+    // 退出诊断：上一次心跳时的窗口可见性/父窗口，用于状态突变时立即输出
+    private bool m_LastHeartbeatVisible;
+    private IntPtr m_LastHeartbeatParent = IntPtr.Zero;
     // 退出诊断：暂停状态（Unity 无 Application.isPaused 静态属性，只能由回调记录）
     private bool m_IsPaused;
 
@@ -103,6 +106,9 @@ public class WallpaperController : MonoBehaviour
     private System.Threading.Thread m_WatchdogThread;
     private volatile bool m_WatchdogRunning;
     private volatile bool m_SelfTerminate;
+    // 用户主动退出（托盘菜单）：不调用 Application.Quit()（在 TrackPopupMenuEx 模态消息循环里会卡死），
+    // 改为设置本标志，由 Update() 在主循环里执行清理并硬终止。
+    private volatile bool m_QuitRequested;
 
     // 原子标记：保证“只重启一次”，防止看门狗线程与 WM_DESTROY 路径重复拉起新实例
     private static int s_RelaunchedFlag;
@@ -115,7 +121,7 @@ public class WallpaperController : MonoBehaviour
     /// 请求本进程在创建独立启动器后自行退出。
     /// 【为什么必须退出】新实例在本进程仍存活时无法完成 Unity 引擎初始化（会被完全阻塞），
     /// 所以重启时序必须是「旧进程先退出 → 启动器再拉起新实例」。
-    /// Update() 检测到本标志后会 Application.Quit()，并在 1 秒后 Environment.Exit(0) 兜底。
+    /// Update() 检测到本标志后会直接 TerminateProcess 硬终止（窗口已销毁，Application.Quit 会卡死）。
     /// </summary>
     public void RequestSelfTerminate()
     {
@@ -133,6 +139,10 @@ public class WallpaperController : MonoBehaviour
     {
         s_Instance = this;
         s_QueueStatic = m_Queue;
+
+        // 关闭 Debug.Log 的脚本堆栈输出（默认 ScriptOnly，每行日志都会附带 3 行堆栈，
+        // 22 分钟心跳就能写 34KB）。仅影响 LogType.Log；Warning/Error 仍保留堆栈便于排查。
+        Application.SetStackTraceLogType(LogType.Log, StackTraceLogType.None);
 
         try
         {
@@ -199,7 +209,7 @@ public class WallpaperController : MonoBehaviour
             }
         }
 
-        Debug.Log("[ExitTrace] Start 完成，进入正常运行（心跳日志每 10 秒输出一次）");
+        Debug.Log("[ExitTrace] Start 完成，进入正常运行（心跳每 60 秒一次，窗口状态变化时立即输出）");
     }
 
     IntPtr AcquireUnityWindow()
@@ -289,10 +299,6 @@ public class WallpaperController : MonoBehaviour
         originalParent = User32.GetParent(unityWindow);
         originalExStyle = User32.GetWindowLong(unityWindow, GWL_EXSTYLE);
         originalStyle = User32.GetWindowLong(unityWindow, GWL_STYLE);
-        Debug.Log("[Reattach] AttachToDesktopCore 开始 parent=" + originalParent
-            + " style=0x" + originalStyle.ToString("X8")
-            + " visible=" + User32.IsWindowVisible(unityWindow)
-            + " isWindow=" + User32.IsWindow(unityWindow));
 
         User32.ShowWindow(unityWindow, SW_HIDE);
 
@@ -472,13 +478,13 @@ public class WallpaperController : MonoBehaviour
         User32.EnumWindows(new User32.EnumWindowsProc(EnumWorkerWProc), IntPtr.Zero);
         if (s_FoundWorkerW != IntPtr.Zero)
         {
-            Debug.Log("已定位壁纸层 WorkerW（顶层）"); return s_FoundWorkerW;
+            return s_FoundWorkerW;
         }
         // 2) Progman 的直接子窗口（Win11 raised desktop）
         User32.EnumChildWindows(progman, new User32.EnumChildProc(EnumProgmanChildProc), IntPtr.Zero);
         if (s_FoundWorkerW != IntPtr.Zero)
         {
-            Debug.Log("已定位壁纸层 WorkerW（Progman 子窗口）"); return s_FoundWorkerW;
+            return s_FoundWorkerW;
         }
         return IntPtr.Zero;
     }
@@ -677,7 +683,11 @@ public class WallpaperController : MonoBehaviour
         Debug.Log("[ExitTrace] QuitApp 被调用（托盘菜单退出）t="
             + Time.realtimeSinceStartup.ToString("F1") + "s");
         RestoreToWindow();
-        Application.Quit(0);
+        // 【关键】不要在 TrackPopupMenuEx 的模态消息循环里调用 Application.Quit()：
+        // 实测退出流程能走完（OnApplicationQuit/OnDestroy 都执行），但进程卡在引擎 shutdown
+        // 阶段不退出（日志止于 Memory Statistics）。改为设置标志，由 Update() 在下一帧
+        // 主循环正常执行时清理并硬终止，与 m_SelfTerminate 路径保持一致。
+        m_QuitRequested = true;
     }
 
     public void SetSystemShutdown()
@@ -973,12 +983,6 @@ public class WallpaperController : MonoBehaviour
         return false;
     }
 
-    void OnApplicationFocus(bool hasFocus)
-    {
-        Debug.Log("[ExitTrace] OnApplicationFocus=" + hasFocus
-            + " t=" + Time.realtimeSinceStartup.ToString("F1") + "s");
-    }
-
     void OnApplicationPause(bool pauseStatus)
     {
         m_IsPaused = pauseStatus;
@@ -990,6 +994,12 @@ public class WallpaperController : MonoBehaviour
     {
         Debug.Log("[ExitTrace] OnApplicationQuit 被调用 t="
             + Time.realtimeSinceStartup.ToString("F1") + "s frame=" + Time.frameCount);
+        // 用户主动退出时窗口恢复已在 RestoreToWindow() 完成，这里跳过，避免重复 SetParent 触发卡死
+        if (m_QuitRequested)
+        {
+            Debug.Log("[ExitTrace] OnApplicationQuit: 用户主动退出路径，跳过重复清理");
+            return;
+        }
         UninstallMouseHook();
         if (unityWindow != IntPtr.Zero)
         {
@@ -1025,16 +1035,39 @@ public class WallpaperController : MonoBehaviour
             return;
         }
 
-        // 退出诊断：每 10 秒输出一次心跳，定位「运行一段时间后退出」的退出前最后状态
+        // 用户主动退出（托盘菜单）：RestoreToWindow() 已做 UninstallMouseHook + 窗口恢复，
+        // 这里只需补托盘清理后硬终止（Application.Quit 在模态消息循环里会卡死）。
+        if (m_QuitRequested)
+        {
+            Debug.Log("[ExitTrace] 用户主动退出，执行清理并硬终止（避免 Application.Quit 卡死）");
+            UninstallMouseHook();
+            if (m_NotifyIconItem != null)
+            {
+                m_NotifyIconItem.Dispose();
+                m_NotifyIconItem = null;
+            }
+            User32.TerminateProcess(User32.GetCurrentProcess(), 0);
+            System.Environment.Exit(0);
+            return;
+        }
+
+        // 退出诊断：每 60 秒输出一次心跳；窗口可见性/父窗口发生变化时立即输出
+        //（「壁纸突然消失」的直接线索就是 windowVisible 或 parent 变化）
         m_HeartbeatTimer += Time.unscaledDeltaTime;
-        if (m_HeartbeatTimer >= 10f)
+
+        bool visNow = unityWindow != IntPtr.Zero && User32.IsWindowVisible(unityWindow);
+        IntPtr parentNow = User32.GetParent(unityWindow);
+        bool stateChanged = visNow != m_LastHeartbeatVisible || parentNow != m_LastHeartbeatParent;
+        m_LastHeartbeatVisible = visNow;
+        m_LastHeartbeatParent = parentNow;
+
+        if (m_HeartbeatTimer >= 60f || stateChanged)
         {
             m_HeartbeatTimer = 0f;
-            bool vis = unityWindow != IntPtr.Zero && User32.IsWindowVisible(unityWindow);
             Debug.Log("[Heartbeat] t=" + Time.realtimeSinceStartup.ToString("F1")
                 + "s frame=" + Time.frameCount
-                + " windowVisible=" + vis
-                + " parent=" + User32.GetParent(unityWindow)
+                + " windowVisible=" + visNow
+                + " parent=" + parentNow
                 + " isFocused=" + Application.isFocused
                 + " isPaused=" + m_IsPaused
                 + " rect=" + s_WindowScreenRect.left + "," + s_WindowScreenRect.top

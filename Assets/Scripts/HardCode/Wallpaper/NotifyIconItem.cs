@@ -14,9 +14,10 @@ public class NotifyIconItem
     // 壁纸控制器引用（托盘菜单的“恢复窗口 / 退出”转发给它）
     public static WallpaperController Controller;
 
-    private const int MaximizeID = 1001;                 // 任务栏菜单—最大化
-    private const int MinimizeID = 1002;                 // 任务栏菜单—最小化
-    private const int QuitID = 1003;                 // 任务栏菜单—退出
+    private const int AboutID = 1001;                    // 任务栏菜单—关于（打开作者主页）
+    private const int ShowID = 1002;                     // 任务栏菜单—显示壁纸
+    private const int HideID = 1003;                     // 任务栏菜单—隐藏壁纸
+    private const int QuitID = 1004;                     // 任务栏菜单—退出
 
     public void Init()
     {
@@ -84,11 +85,10 @@ public class NotifyIconItem
     [MonoPInvokeCallback]
     private static IntPtr WndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
     {
-        // 退出诊断：记录退出/会话/显示相关的关键窗口消息（过滤高频消息，避免刷屏）
-        // 0x0002 WM_DESTROY / 0x0010 WM_CLOSE / 0x0011 WM_QUERYENDSESSION / 0x0016 WM_ENDSESSION
-        // 0x000B WM_SETTINGCHANGE / 0x001A WM_DISPLAYCHANGE / 0x0112 WM_SYSCOMMAND
-        if (msg == 0x0002 || msg == 0x0010 || msg == 0x0011 || msg == 0x0016
-            || msg == 0x000B || msg == 0x001A || msg == User32.WM_SYSCOMMAND)
+        // 退出诊断：只记录退出/会话/显示变化等关键窗口消息（过滤高频消息，避免刷屏）
+        // 0x0002 WM_DESTROY / 0x0010 WM_CLOSE / 0x0011 WM_QUERYENDSESSION / 0x0016 WM_ENDSESSION / 0x001A WM_DISPLAYCHANGE
+        // 不含 WM_SETTINGCHANGE / WM_SYSCOMMAND：触发过于频繁，与退出恢复无关
+        if (msg == 0x0002 || msg == 0x0010 || msg == 0x0011 || msg == 0x0016 || msg == 0x001A)
         {
             Debug.Log("[ExitTrace] WndProc msg=0x" + msg.ToString("X4")
                 + " wParam=0x" + wParam.ToInt64().ToString("X")
@@ -170,19 +170,25 @@ public class NotifyIconItem
             // 任务栏菜单点击事件
             switch ((int)wParam)
             {
-                case MinimizeID:
-                    // 最小化
-                    User32.ShowWindowAsync(hWnd, User32.SW_MINIMIZE);
+                case AboutID:
+                    // 关于：在默认浏览器打开作者主页（IL2CPP 下 Process.Start 不可用，走 ShellExecute）
+                    Debug.Log("托盘菜单点击「关于」，打开 https://www.xuefei.net.cn");
+                    User32.ShellExecute(IntPtr.Zero, "open", "https://www.xuefei.net.cn",
+                        null, null, User32.SW_SHOWNORMAL);
                     break;
-                case MaximizeID:
-                    // 最大化
-                    User32.ShowWindowAsync(hWnd, User32.SW_MAXIMIZE);
+                case ShowID:
+                    // 显示壁纸（壁纸窗口是 WorkerW 子窗口，用 SW_SHOW 而非 SW_MAXIMIZE）
+                    User32.ShowWindowAsync(hWnd, User32.SW_SHOW);
+                    break;
+                case HideID:
+                    // 隐藏壁纸
+                    User32.ShowWindowAsync(hWnd, User32.SW_HIDE);
                     break;
                 case QuitID:
-                    // 关闭（先解除壁纸挂接，再退出）
+                    // 退出（先解除壁纸挂接，再退出）
                     Debug.Log("[ExitTrace] 托盘菜单点击「退出」");
                     if (Controller != null) Controller.QuitApp();
-                    else Application.Quit(0);
+                    else User32.TerminateProcess(User32.GetCurrentProcess(), 0);
                     break;
                 default:
                     Debug.Log($"未处理的菜单点击事件 ID值:{(int)wParam}");
@@ -205,9 +211,10 @@ public class NotifyIconItem
     {
         User32.GetCursorPos(out var cursorPoint);
         IntPtr menuPtr = User32.CreatePopupMenu();
-        User32.AppendMenu(menuPtr, User32.MenuFlags.MF_STRING, MinimizeID, "隐藏壁纸");
-        User32.AppendMenu(menuPtr, User32.MenuFlags.MF_STRING, MaximizeID, "显示壁纸");
+        User32.AppendMenu(menuPtr, User32.MenuFlags.MF_STRING, AboutID, "关于");
         User32.AppendMenu(menuPtr, User32.MenuFlags.MF_SEPARATOR, 0, "");
+        User32.AppendMenu(menuPtr, User32.MenuFlags.MF_STRING, ShowID, "显示");
+        User32.AppendMenu(menuPtr, User32.MenuFlags.MF_STRING, HideID, "隐藏");
         User32.AppendMenu(menuPtr, User32.MenuFlags.MF_STRING, QuitID, "退出");
 
         // 注意:调用SetForegroundWindow是为了鼠标点击别处时隐藏弹出的菜单，不能省略
