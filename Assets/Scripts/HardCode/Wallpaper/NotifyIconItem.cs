@@ -111,7 +111,8 @@ public class NotifyIconItem
             {
                 // 新实例必须等本进程退出后才能启动（并存会导致新实例卡在 Unity 引擎初始化），
                 // 所以启动器创建成功后要主动让本进程退出。
-                if (WallpaperController.TryMarkRelaunched() && Controller.RelaunchSelf())
+                if (WallpaperController.TryMarkRelaunched()
+                    && Controller.RelaunchSelf("窗口销毁", "WM_DESTROY（Explorer重启/显示变化/锁屏解锁）"))
                 {
                     Controller.RequestSelfTerminate();
                 }

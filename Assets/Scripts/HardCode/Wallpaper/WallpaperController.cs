@@ -10,7 +10,7 @@ using System.Threading;
 /// 纯 C# 壁纸控制器（无原生 DLL、无注入 Explorer）。
 ///
 /// 职责：
-///   1. 把 Unity 窗口挂接到桌面层（Progman / WorkerW），成为真正的壁纸；
+///   1. 把 Unity 窗口挂接到桌面根窗口 Progman（z 序插在图标层 SHELLDLL_DefView 之下），成为真正的壁纸；
 ///   2. 在本进程内安装 WH_MOUSE_LL 低层鼠标钩子（OS 直接回调本进程主线程），
 ///      捕获桌面上的鼠标移动/按键并换算到 Unity 窗口坐标；
 ///   3. 把钩子事件喂给自定义的 WallpaperInputModule → UGUI，使按钮/拖拽正常响应；
@@ -44,6 +44,7 @@ public class WallpaperController : MonoBehaviour
     const uint SWP_NOACTIVATE = 0x0010;
     const uint SWP_NOSIZE = 0x0001;
     const uint SWP_NOMOVE = 0x0002;
+    const uint SWP_NOZORDER = 0x0004;        // 不改变 z 序（尺寸校正时用，避免把窗口提到图标层之上）
     const uint SWP_FRAMECHANGED = 0x0020;     // 强制重算非客户区（使样式变更立即生效）
     const int SW_HIDE = 0;
     const int SW_SHOW = 5;
@@ -62,6 +63,9 @@ public class WallpaperController : MonoBehaviour
     private IntPtr originalParent = IntPtr.Zero;
     private int originalExStyle;
     private int originalStyle;
+    // 图标层句柄（Progman 的子窗口 SHELLDLL_DefView）：本窗口必须始终位于它之下，
+    // 否则桌面图标会被壁纸盖住。挂接时缓存，Update() 里做 z 序再断言用。
+    private IntPtr m_DefView = IntPtr.Zero;
 
     private NotifyIconItem m_NotifyIconItem;
     private WallpaperInputModule m_InputModule;
@@ -88,6 +92,8 @@ public class WallpaperController : MonoBehaviour
 
     // 退出诊断：心跳计时器（每 60 秒输出一次运行状态）
     private float m_HeartbeatTimer;
+    // 维护计时器（每 5 秒做一次：尺寸/位置再断言 + z 序再断言）
+    private float m_ZOrderTimer;
     // 退出诊断：上一次心跳时的窗口可见性/父窗口，用于状态突变时立即输出
     private bool m_LastHeartbeatVisible;
     private IntPtr m_LastHeartbeatParent = IntPtr.Zero;
@@ -100,9 +106,10 @@ public class WallpaperController : MonoBehaviour
     public bool IsSystemShuttingDown => s_SystemShutdown;
 
     // 存活守护：后台线程等待 Explorer 进程句柄，Explorer 重启/崩溃时自动拉起新实例。
-    // 【重要】Explorer 重启会销毁 WorkerW 子树，而 DestroyWindow 会【递归销毁子窗口】，
-    // 所以本进程的 Unity 窗口（WorkerW 的子窗口）也会被一并销毁 —— 实测 isWindow=False。
-    // 因此无法在原进程内"重新挂接"（窗口已不存在），只能重启进程。
+    // 【重要】本窗口挂在 Progman 下。Explorer 重启会销毁 Progman 及其整棵子树
+    //（DestroyWindow 会【递归销毁子窗口】），本窗口随之被销毁 —— 实测 isWindow=False。
+    // 因此 Explorer 进程重启无法在原进程内"重新挂接"（窗口已不存在），只能重启进程。
+    // 注意：仅「WorkerW 重建」（切换壁纸 / 桌面刷新）不再销毁本窗口，这正是改挂 Progman 的原因。
     private System.Threading.Thread m_WatchdogThread;
     private volatile bool m_WatchdogRunning;
     private volatile bool m_SelfTerminate;
@@ -139,6 +146,13 @@ public class WallpaperController : MonoBehaviour
     {
         s_Instance = this;
         s_QueueStatic = m_Queue;
+
+        // 每日重启日志：记录新实例启动（编辑器下 RestartLogger 内部会跳过）
+        RestartLogger.WriteStartup();
+
+        // 桌面幻灯片守卫：记录当前背景类型，必要时关闭系统桌面幻灯片
+        //（否则 Windows 每 30 分钟切换壁纸会重建 WorkerW，把壁纸窗口销毁）
+        DesktopSlideshowGuard.OnWallpaperStart();
 
         // 关闭 Debug.Log 的脚本堆栈输出（默认 ScriptOnly，每行日志都会附带 3 行堆栈，
         // 22 分钟心跳就能写 34KB）。仅影响 LogType.Log；Warning/Error 仍保留堆栈便于排查。
@@ -312,32 +326,11 @@ public class WallpaperController : MonoBehaviour
         User32.GetWindowThreadProcessId(progman, out uint explorerPid);
         s_ExplorerPid = explorerPid;
 
-        // 1) 发送 0x052C 创建壁纸层 WorkerW。
-        //    必须 wParam=0xD、lParam=0x1，否则 shell 静默无操作（壁纸层保持隐藏）。
+        // 1) 发送 0x052C 确保壁纸层 WorkerW 存在（必须 wParam=0xD、lParam=0x1，
+        //    否则 shell 静默无操作）。本窗口不再挂到它下面，原因见步骤 3。
         SpawnWallpaperWorkerW(progman);
 
-        // 2) 找到壁纸层 WorkerW（可见 + 属于 Explorer + 不含 SHELLDLL_DefView）。
-        IntPtr workerW = FindWallpaperWorkerW(progman);
-        if (workerW == IntPtr.Zero)
-        {
-            // 自愈：Explorer 有时会延迟创建壁纸层（图标层刚建立时），重试 2 轮再放弃
-            for (int retry = 0; retry < 2 && workerW == IntPtr.Zero; retry++)
-            {
-                Debug.Log("未找到壁纸层 WorkerW，第 " + (retry + 1) + " 次重试 Spawn 0x052C");
-                Thread.Sleep(400);
-                SpawnWallpaperWorkerW(progman);
-                workerW = FindWallpaperWorkerW(progman);
-            }
-        }
-        if (workerW == IntPtr.Zero)
-        {
-            Debug.Log("未找到壁纸层 WorkerW，无法挂接 → 回退普通窗口");
-            Debug.LogError("[Wallpaper] 未找到壁纸层 WorkerW，无法挂接");
-            RestoreToWindow();
-            return;
-        }
-
-        // 3) 关键：先改样式（清 WS_POPUP、置 WS_CHILD）再 SetParent。
+        // 2) 关键：先改样式（清 WS_POPUP、置 WS_CHILD）再 SetParent。
         //    跳过这步会停在「半挂载」状态：GetParent() 返回 NULL，z 序与坐标全乱。
         int style = User32.GetWindowLong(unityWindow, GWL_STYLE);
         style &= ~WS_POPUP;
@@ -355,18 +348,36 @@ public class WallpaperController : MonoBehaviour
         ex &= ~(WS_EX_CLIENTEDGE | WS_EX_WINDOWEDGE | WS_EX_STATICEDGE | WS_EX_DLGMODALFRAME);
         User32.SetWindowLong(unityWindow, GWL_EXSTYLE, ex);
 
-        // 4) 挂到壁纸层 WorkerW（该层在图标之下、默认壁纸图之上）。
-        bool setParentOk = User32.SetParent(unityWindow, workerW);
-        Debug.Log("[Reattach] SetParent(" + unityWindow + ", " + workerW + ") 返回 "
+        // 3) 挂到 Progman（桌面根窗口），而不是壁纸层 WorkerW。
+        //    【为什么】Windows 切换壁纸 / 桌面重建时会销毁并重建壁纸层 WorkerW，
+        //    而 DestroyWindow 会递归销毁子窗口 → 挂在 WorkerW 下的本窗口被一并销毁，
+        //    只能靠重启进程恢复（实测每 30 分钟一次）。
+        //    改挂 Progman 后：WorkerW 重建只影响它自己的子树，本窗口得以幸存，
+        //    无需重启进程即可持续显示。
+        //    z 序：插到 SHELLDLL_DefView（图标层）之下，保证图标仍显示在壁纸之上。
+        IntPtr defView = User32.FindWindowEx(progman, IntPtr.Zero, "SHELLDLL_DefView", null);
+        m_DefView = defView;   // 缓存图标层句柄，Update() 里做 z 序再断言
+        IntPtr insertAfter = defView != IntPtr.Zero ? defView : HWND_BOTTOM;
+        bool setParentOk = User32.SetParent(unityWindow, progman);
+        Debug.Log("[Reattach] SetParent(" + unityWindow + ", Progman=" + progman + ") 返回 "
             + setParentOk + " err=" + Marshal.GetLastWin32Error()
-            + " IsWindow(workerW)=" + User32.IsWindow(workerW)
+            + " SHELLDLL_DefView=" + defView
             + " GetParent=" + User32.GetParent(unityWindow)
             + " style=0x" + User32.GetWindowLong(unityWindow, GWL_STYLE).ToString("X8"));
 
-        // 铺满目标取自壁纸层 WorkerW 的客户区尺寸（精确等于桌面覆盖区域，
+        // SetParent 失败必须回退：否则窗口会停在「全屏普通顶层窗口」状态盖住桌面图标，
+        // 这正是本轮事故的现象。回退后至少是可用的窗口模式（托盘可退出）。
+        if (!setParentOk || User32.GetParent(unityWindow) != progman)
+        {
+            Debug.LogError("[Reattach] SetParent 到 Progman 失败，回退为普通窗口");
+            RestoreToWindow();
+            return;
+        }
+
+        // 铺满目标取自 Progman 的客户区尺寸（精确等于桌面覆盖区域，
         // 绕开分辨率/DPI 误差，单屏多屏都准确）。
         User32.RECT parentClient;
-        User32.GetClientRect(workerW, out parentClient);
+        User32.GetClientRect(progman, out parentClient);
         int fillW = parentClient.right - parentClient.left;
         int fillH = parentClient.bottom - parentClient.top;
         if (fillW <= 0 || fillH <= 0)
@@ -374,24 +385,24 @@ public class WallpaperController : MonoBehaviour
             fillW = Screen.width; fillH = Screen.height;
         }
 
-        // 5) 沉底 + 铺满全屏
+        // 4) 定位到图标层之下 + 铺满全屏
         //    SWP_FRAMECHANGED 让上面清掉的边框/标题栏立即重算，客户区精确铺满。
-        User32.SetWindowPos(unityWindow, HWND_BOTTOM, 0, 0, fillW, fillH,
+        User32.SetWindowPos(unityWindow, insertAfter, 0, 0, fillW, fillH,
             SWP_NOACTIVATE | SWP_FRAMECHANGED);
         // 保险：读取真实客户区，若仍有残余边框导致偏小，按差值放大窗口，杜绝边缘漏桌面
-        EnsureClientSize(unityWindow, fillW, fillH);
+        EnsureClientSize(unityWindow, fillW, fillH, insertAfter);
         User32.ShowWindow(unityWindow, SW_SHOW);
 
         // 缓存窗口屏幕矩形（用于钩子精确命中判断）
         User32.GetWindowRect(unityWindow, out s_WindowScreenRect);
 
         InstallMouseHook();
-        Debug.Log("已挂接为桌面壁纸（父窗口=壁纸层 WorkerW，Explorer PID=" + explorerPid + "）"
+        Debug.Log("已挂接为桌面壁纸（父窗口=Progman，z 序在图标层 SHELLDLL_DefView 之下，Explorer PID=" + explorerPid + "）"
             + " 窗口=" + unityWindow + " 屏幕矩形=" + s_WindowScreenRect.left + "," + s_WindowScreenRect.top
             + "," + s_WindowScreenRect.right + "," + s_WindowScreenRect.bottom
             + " Screen=" + Screen.width + "x" + Screen.height + " dpi=" + Screen.dpi);
 
-        // 挂接成功后启动 Explorer 存活守护：Explorer 重启会销毁 WorkerW 子树，
+        // 挂接成功后启动 Explorer 存活守护：Explorer 重启会销毁 Progman 子树（含本窗口），
         // 本进程随之退出，守护线程检测到 Explorer 退出即拉起新实例重新挂接。
         StartExplorerWatchdog();
     }
@@ -405,7 +416,7 @@ public class WallpaperController : MonoBehaviour
     /// 按（目标 - 实际）差值放大窗口外层尺寸，确保壁纸铺满全屏、右下边缘不露桌面。
     /// 客户区偏大（理论上不会）则不处理。
     /// </summary>
-    void EnsureClientSize(IntPtr hwnd, int targetW, int targetH)
+    void EnsureClientSize(IntPtr hwnd, int targetW, int targetH, IntPtr insertAfter)
     {
         User32.RECT client;
         User32.GetClientRect(hwnd, out client);
@@ -418,7 +429,7 @@ public class WallpaperController : MonoBehaviour
         User32.GetWindowRect(hwnd, out win);
         int ww = (win.right - win.left) + dw;
         int wh = (win.bottom - win.top) + dh;
-        User32.SetWindowPos(hwnd, HWND_BOTTOM, 0, 0, ww, wh, SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        User32.SetWindowPos(hwnd, insertAfter, 0, 0, ww, wh, SWP_NOACTIVATE | SWP_FRAMECHANGED);
     }
 
     /// <summary>
@@ -696,11 +707,13 @@ public class WallpaperController : MonoBehaviour
     }
 
     /// <summary>
-    /// 桌面重建(Explorer 重启 / 显示变化 / 锁屏解锁)时，本进程窗口(WorkerW 子窗口)会被 OS 销毁。
+    /// 桌面重建(Explorer 重启 / 显示变化 / 锁屏解锁)时，本进程窗口(Progman 子窗口)会被 OS 销毁。
     /// 此时自动拉起一个新实例继续挂接壁纸，而不是让壁纸消失。
     /// 仅在「非用户主动退出、非系统关机」时生效；带防抖避免 Explorer 持续崩溃导致无限重启。
     /// </summary>
-    public bool RelaunchSelf()
+    /// <param name="reason">重启原因（写入每日重启日志）</param>
+    /// <param name="detail">补充说明（写入每日重启日志）</param>
+    public bool RelaunchSelf(string reason, string detail)
     {
         if (UserRequestedQuit || s_SystemShutdown) return false;
         if (!ShouldRelaunchByBackoff()) return false;
@@ -725,6 +738,8 @@ public class WallpaperController : MonoBehaviour
             int myPid = (int)User32.GetCurrentProcessId();
             if (TrySpawnDetachedLauncher(exePath, myPid, out int launcherPid))
             {
+                // 只在「确实要重启」时记录（防抖失败 / 用户退出 / 系统关机都不会走到这里）
+                RestartLogger.Write(reason, detail);
                 Debug.Log("[ExitTrace] 已创建独立启动器 PID=" + launcherPid
                     + "（本进程退出后将自动拉起新实例）");
                 return true;
@@ -878,8 +893,8 @@ public class WallpaperController : MonoBehaviour
     /// 启动 Explorer 存活守护线程。挂接成功后调用一次。
     /// 后台等待 Explorer 进程句柄：一旦 Explorer 重启/崩溃，线程等几秒让新 Explorer 起来后
     /// 拉起一个新实例重新挂接壁纸。
-    /// 【为什么必须重启进程】Explorer 重启会销毁 WorkerW，而 DestroyWindow 会递归销毁子窗口，
-    /// 本进程的 Unity 窗口（WorkerW 子窗口）随之被销毁（实测 isWindow=False），
+    /// 【为什么必须重启进程】Explorer 重启会销毁 Progman，而 DestroyWindow 会递归销毁子窗口，
+    /// 本进程的 Unity 窗口（Progman 子窗口）随之被销毁（实测 isWindow=False），
     /// 原进程内已无窗口可挂，只能重启。
     /// 用户主动退出 / 系统关机时不触发。
     /// </summary>
@@ -931,7 +946,7 @@ public class WallpaperController : MonoBehaviour
                 }
                 // 窗口已被销毁，只能重启进程。
                 // 顺序：先由 RelaunchSelf 创建独立启动器，再让本进程退出（新实例必须等旧进程消失后才启动）
-                if (TryMarkRelaunched() && RelaunchSelf())
+                if (TryMarkRelaunched() && RelaunchSelf("Explorer退出", "Explorer 进程已退出(PID=" + pid + ")"))
                 {
                     m_SelfTerminate = true;
                 }
@@ -994,6 +1009,8 @@ public class WallpaperController : MonoBehaviour
     {
         Debug.Log("[ExitTrace] OnApplicationQuit 被调用 t="
             + Time.realtimeSinceStartup.ToString("F1") + "s frame=" + Time.frameCount);
+        // 退出时恢复系统桌面背景类型（壁纸关闭后交还给 Windows）
+        DesktopSlideshowGuard.OnWallpaperStop();
         // 用户主动退出时窗口恢复已在 RestoreToWindow() 完成，这里跳过，避免重复 SetParent 触发卡死
         if (m_QuitRequested)
         {
@@ -1013,6 +1030,7 @@ public class WallpaperController : MonoBehaviour
     void OnDestroy()
     {
         Debug.Log("[ExitTrace] OnDestroy 被调用");
+        DesktopSlideshowGuard.OnWallpaperStop();
         UninstallMouseHook();
         if (m_NotifyIconItem != null)
         {
@@ -1029,6 +1047,8 @@ public class WallpaperController : MonoBehaviour
             // 进程在调用后仍长期存活（日志停在下一行、无 OnApplicationQuit/OnDestroy），
             // 导致独立启动器一直空等、壁纸无法恢复。窗口已不存在，无需优雅退出，
             // 直接硬终止本进程，让启动器立刻检测到并拉起新实例。
+            // 先恢复系统桌面背景类型（新实例启动时会重新记录并关闭）
+            DesktopSlideshowGuard.OnWallpaperStop();
             User32.TerminateProcess(User32.GetCurrentProcess(), 0);
             // TerminateProcess 成功时不会返回；若失败（极少数情况），退化为 Environment.Exit
             System.Environment.Exit(0);
@@ -1046,6 +1066,8 @@ public class WallpaperController : MonoBehaviour
                 m_NotifyIconItem.Dispose();
                 m_NotifyIconItem = null;
             }
+            // TerminateProcess 不会触发 OnApplicationQuit，必须在这里恢复桌面背景类型
+            DesktopSlideshowGuard.OnWallpaperStop();
             User32.TerminateProcess(User32.GetCurrentProcess(), 0);
             System.Environment.Exit(0);
             return;
@@ -1072,6 +1094,65 @@ public class WallpaperController : MonoBehaviour
                 + " isPaused=" + m_IsPaused
                 + " rect=" + s_WindowScreenRect.left + "," + s_WindowScreenRect.top
                 + "," + s_WindowScreenRect.right + "," + s_WindowScreenRect.bottom);
+        }
+
+        // —— 每 5 秒维护：尺寸/位置 + z 序 再断言 ——
+        m_ZOrderTimer += Time.unscaledDeltaTime;
+        if (m_ZOrderTimer >= 5f && unityWindow != IntPtr.Zero)
+        {
+            m_ZOrderTimer = 0f;
+            IntPtr parent = User32.GetParent(unityWindow);
+            if (parent != IntPtr.Zero)
+            {
+                // 每次都重新查询图标层：桌面刷新可能销毁重建 SHELLDLL_DefView，
+                // 缓存的句柄会失效（用失效句柄 SetWindowPos 会静默失败，等于没有校正）。
+                IntPtr defView = User32.FindWindowEx(parent, IntPtr.Zero, "SHELLDLL_DefView", null);
+                m_DefView = defView;
+
+                // (a) 尺寸/位置再断言：
+                //     Unity 会在启动后某个时刻按「分辨率 + 非客户区」重设窗口尺寸
+                //     （实测 2720x1080 → 2736x1119），而本窗口是 WS_CHILD 无边框，
+                //     客户区应精确等于父窗口客户区，否则壁纸被拉伸、右/下边缘超出屏幕。
+                //     已实测：把尺寸改回后 Unity 不会对抗（90 秒内没再改回去），
+                //     所以只在检测到偏差时校正一次即可。
+                User32.RECT parentClient;
+                User32.GetClientRect(parent, out parentClient);
+                int targetW = parentClient.right - parentClient.left;
+                int targetH = parentClient.bottom - parentClient.top;
+                if (targetW > 0 && targetH > 0)
+                {
+                    User32.RECT winRect;
+                    User32.GetWindowRect(unityWindow, out winRect);
+                    int curW = winRect.right - winRect.left;
+                    int curH = winRect.bottom - winRect.top;
+                    if (curW != targetW || curH != targetH)
+                    {
+                        // 一并把位置重置到父窗口客户区原点 (0,0)；SWP_NOZORDER 不动 z 序
+                        User32.SetWindowPos(unityWindow, IntPtr.Zero, 0, 0, targetW, targetH,
+                            SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+                        Debug.Log("[Heartbeat] 尺寸校正：" + curW + "x" + curH
+                            + " → " + targetW + "x" + targetH);
+                    }
+                }
+
+                // (b) z 序再断言：WorkerW 重建 / 桌面刷新可能改变 Progman 子窗口的 z 序。
+                //     若本窗口被挤到 SHELLDLL_DefView（图标层）之上，桌面图标会被壁纸盖住。
+                //     每 5 秒检查一次：GW_HWNDPREV 取本窗口上方相邻窗口，正常应正好是图标层；
+                //     不一致才校正（NOMOVE|NOSIZE，只改 z 序，不动位置大小，成本极低）。
+                //     注意：本窗口位于最顶层时 GW_HWNDPREV 返回 NULL，同样要校正。
+                if (defView != IntPtr.Zero)
+                {
+                    IntPtr above = User32.GetWindow(unityWindow, User32.GW_HWNDPREV);
+                    if (above != defView)
+                    {
+                        User32.SetWindowPos(unityWindow, defView, 0, 0, 0, 0,
+                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+                        string aboveName = above == IntPtr.Zero ? "NULL(本窗口在最顶层)" : GetClassNameOf(above);
+                        Debug.Log("[Heartbeat] z 序校正：本窗口上方是 " + aboveName
+                            + "（应为 SHELLDLL_DefView），已重新插到图标层之下");
+                    }
+                }
+            }
         }
 
         // 周期刷新窗口屏幕矩形（多屏/分辨率变化也能正确命中）

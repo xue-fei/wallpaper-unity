@@ -24,6 +24,16 @@ public class User32
     [DllImport("user32.dll")]
     public static extern IntPtr FindWindowEx(IntPtr parentHandle, IntPtr childAfter, string className, string windowTitle);
 
+    // 获取 z 序相邻窗口（用于校正壁纸窗口与图标层的上下关系）
+    [DllImport("user32.dll")]
+    public static extern IntPtr GetWindow(IntPtr hWnd, uint uCmd);
+
+    // GetWindow 的 uCmd 取值
+    public const uint GW_HWNDFIRST = 0;   // z 序最顶端
+    public const uint GW_HWNDLAST = 1;    // z 序最底端
+    public const uint GW_HWNDNEXT = 2;   // 下一个（更靠下）
+    public const uint GW_HWNDPREV = 3;    // 上一个（更靠上）
+
     // 发送带有超时的消息
     [DllImport("user32.dll")]
     public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam, uint fuFlags, uint timeout, out IntPtr lpdwResult);
