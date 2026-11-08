@@ -38,6 +38,10 @@ public static class DesktopSlideshowGuard
     const uint REG_DWORD  = 4;
     const uint WM_SETTINGCHANGE = 0x001A;
     const uint SMTO_ABORTIFHUNG = 0x0002;
+    // HWND_BROADCAST 是同步广播：退出路径要尽快返回，否则「点退出」会明显卡顿。
+    // 注册表值在广播前已写入，Explorer 处理 WM_SETTINGCHANGE 通常 <10ms；
+    // SMTO_ABORTIFHUNG 会跳过挂起窗口，200ms 超时不影响最终结果。
+    const uint BROADCAST_TIMEOUT_MS = 200;
     static readonly IntPtr HWND_BROADCAST = new IntPtr(0xFFFF);
 
     // ---------- P/Invoke ----------
@@ -210,6 +214,6 @@ public static class DesktopSlideshowGuard
     static void NotifyExplorer()
     {
         SendMessageTimeout(HWND_BROADCAST, WM_SETTINGCHANGE, IntPtr.Zero,
-            "Wallpapers", SMTO_ABORTIFHUNG, 5000, out _);
+            "Wallpapers", SMTO_ABORTIFHUNG, BROADCAST_TIMEOUT_MS, out _);
     }
 }

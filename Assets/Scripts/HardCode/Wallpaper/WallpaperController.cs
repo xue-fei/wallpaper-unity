@@ -693,12 +693,26 @@ public class WallpaperController : MonoBehaviour
         UserRequestedQuit = true;
         Debug.Log("[ExitTrace] QuitApp 被调用（托盘菜单退出）t="
             + Time.realtimeSinceStartup.ToString("F1") + "s");
-        RestoreToWindow();
-        // 【关键】不要在 TrackPopupMenuEx 的模态消息循环里调用 Application.Quit()：
-        // 实测退出流程能走完（OnApplicationQuit/OnDestroy 都执行），但进程卡在引擎 shutdown
-        // 阶段不退出（日志止于 Memory Statistics）。改为设置标志，由 Update() 在下一帧
-        // 主循环正常执行时清理并硬终止，与 m_SelfTerminate 路径保持一致。
-        m_QuitRequested = true;
+
+        // 【即时退出】本方法是在 TrackPopupMenuEx 的模态消息循环里被调用的（WM_COMMAND），
+        // 期间 Unity 主线程被菜单循环接管，Update() 不会执行。旧实现把退出推迟到 Update()，
+        // 导致点「退出」后要等菜单关闭 + 下一帧才真正终止（约 1 秒）；且旧实现先调
+        // RestoreToWindow() 把窗口变成全屏顶层窗口，会先盖住桌面图标。
+        //
+        // 现在直接在这里清理并硬终止：TerminateProcess 是内核级立即终止，
+        // 不依赖 Unity 主循环 / 消息泵，在模态循环里调用完全安全。
+        //（原注释担心的是 Application.Quit() 卡在引擎 shutdown，与硬终止无关。）
+        UninstallMouseHook();
+        // 硬终止不触发 OnApplicationQuit / OnDestroy，必须手动恢复系统桌面背景设置
+        DesktopSlideshowGuard.OnWallpaperStop();
+
+        // 不调 RestoreToWindow()：窗口随进程销毁，桌面图标全程可见。
+        // 不调 m_NotifyIconItem.Dispose()：此刻菜单宿主窗口正是 TrackPopupMenuEx 的 owner，
+        //   在模态循环里销毁它可能让菜单循环卡住；进程终止会自动清理窗口与 WndProc 子类化。
+
+        m_QuitRequested = true;   // 仅作 TerminateProcess 罕见失败时 Update() 的兜底
+        User32.TerminateProcess(User32.GetCurrentProcess(), 0);
+        System.Environment.Exit(0);
     }
 
     public void SetSystemShutdown()
@@ -1011,10 +1025,11 @@ public class WallpaperController : MonoBehaviour
             + Time.realtimeSinceStartup.ToString("F1") + "s frame=" + Time.frameCount);
         // 退出时恢复系统桌面背景类型（壁纸关闭后交还给 Windows）
         DesktopSlideshowGuard.OnWallpaperStop();
-        // 用户主动退出时窗口恢复已在 RestoreToWindow() 完成，这里跳过，避免重复 SetParent 触发卡死
+        // 用户主动退出走 QuitApp() 的即时硬终止，正常不会触发本回调；
+        // 若兜底路径走到这里，跳过重复清理，避免再次 SetParent 触发卡死
         if (m_QuitRequested)
         {
-            Debug.Log("[ExitTrace] OnApplicationQuit: 用户主动退出路径，跳过重复清理");
+            Debug.Log("[ExitTrace] OnApplicationQuit: 用户主动退出兜底路径，跳过重复清理");
             return;
         }
         UninstallMouseHook();
@@ -1038,6 +1053,56 @@ public class WallpaperController : MonoBehaviour
         }
     }
 
+    /// <summary>
+    /// 立即把壁纸窗口重新压回图标层 SHELLDLL_DefView 之下（Update 的 5 秒周期校正也调用它）。
+    ///
+    /// 【为什么要对外暴露】托盘右键弹出菜单时会 SetForegroundWindow(壁纸窗口)，
+    /// 该 API 会激活窗口并把它提到父窗口子链最顶端，跑到图标层之上 → 壁纸盖住桌面图标；
+    /// 而 TrackPopupMenuEx 的模态消息循环会接管 Unity 主线程，Update() 完全停摆，
+    /// 周期校正在菜单显示期间无法自愈。故由托盘链路在「激活后 / 菜单关闭后」主动调用本方法。
+    ///
+    /// 用 SWP_NOACTIVATE 只改 z 序、不改前台激活状态，不会破坏菜单「点空白处自动收起」。
+    /// 每次重新查询图标层句柄：桌面刷新会重建 SHELLDLL_DefView，缓存句柄会失效
+    ///（用失效句柄 SetWindowPos 会静默失败，等于没校正）。
+    /// </summary>
+    /// <param name="log">是否输出校正日志；非主线程/高频调用传 false</param>
+    public void EnsureZOrderBelowIcons(bool log = true)
+    {
+        if (unityWindow == IntPtr.Zero)
+        {
+            return;
+        }
+        IntPtr parent = User32.GetParent(unityWindow);
+        if (parent == IntPtr.Zero)
+        {
+            return;   // 已恢复为普通顶层窗口，无需维护桌面子窗口 z 序
+        }
+
+        IntPtr defView = User32.FindWindowEx(parent, IntPtr.Zero, "SHELLDLL_DefView", null);
+        m_DefView = defView;
+        if (defView == IntPtr.Zero)
+        {
+            return;   // 图标层暂时不存在（桌面重建中），交给下次校正
+        }
+
+        // GW_HWNDPREV 取本窗口上方相邻窗口，正常应正好是图标层；
+        // 本窗口位于最顶层时返回 NULL，同样需要校正。
+        IntPtr above = User32.GetWindow(unityWindow, User32.GW_HWNDPREV);
+        if (above == defView)
+        {
+            return;   // 已经在图标层之下，无需操作
+        }
+
+        User32.SetWindowPos(unityWindow, defView, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        if (log)
+        {
+            string aboveName = above == IntPtr.Zero ? "NULL(本窗口在最顶层)" : GetClassNameOf(above);
+            Debug.Log("[ZOrder] 已把壁纸压回图标层之下（原上方窗口=" + aboveName
+                + "，应为 SHELLDLL_DefView）");
+        }
+    }
+
     void Update()
     {
         if (m_SelfTerminate)
@@ -1055,8 +1120,9 @@ public class WallpaperController : MonoBehaviour
             return;
         }
 
-        // 用户主动退出（托盘菜单）：RestoreToWindow() 已做 UninstallMouseHook + 窗口恢复，
-        // 这里只需补托盘清理后硬终止（Application.Quit 在模态消息循环里会卡死）。
+        // 用户主动退出的【兜底路径】：正常情况已在 QuitApp() 里即时硬终止，
+        // 只有 TerminateProcess / Environment.Exit 都失败时才会走到这里。
+        // 此时菜单早已关闭，Dispose()（销毁菜单宿主窗口）是安全的。
         if (m_QuitRequested)
         {
             Debug.Log("[ExitTrace] 用户主动退出，执行清理并硬终止（避免 Application.Quit 卡死）");
@@ -1104,11 +1170,6 @@ public class WallpaperController : MonoBehaviour
             IntPtr parent = User32.GetParent(unityWindow);
             if (parent != IntPtr.Zero)
             {
-                // 每次都重新查询图标层：桌面刷新可能销毁重建 SHELLDLL_DefView，
-                // 缓存的句柄会失效（用失效句柄 SetWindowPos 会静默失败，等于没有校正）。
-                IntPtr defView = User32.FindWindowEx(parent, IntPtr.Zero, "SHELLDLL_DefView", null);
-                m_DefView = defView;
-
                 // (a) 尺寸/位置再断言：
                 //     Unity 会在启动后某个时刻按「分辨率 + 非客户区」重设窗口尺寸
                 //     （实测 2720x1080 → 2736x1119），而本窗口是 WS_CHILD 无边框，
@@ -1137,21 +1198,10 @@ public class WallpaperController : MonoBehaviour
 
                 // (b) z 序再断言：WorkerW 重建 / 桌面刷新可能改变 Progman 子窗口的 z 序。
                 //     若本窗口被挤到 SHELLDLL_DefView（图标层）之上，桌面图标会被壁纸盖住。
-                //     每 5 秒检查一次：GW_HWNDPREV 取本窗口上方相邻窗口，正常应正好是图标层；
-                //     不一致才校正（NOMOVE|NOSIZE，只改 z 序，不动位置大小，成本极低）。
-                //     注意：本窗口位于最顶层时 GW_HWNDPREV 返回 NULL，同样要校正。
-                if (defView != IntPtr.Zero)
-                {
-                    IntPtr above = User32.GetWindow(unityWindow, User32.GW_HWNDPREV);
-                    if (above != defView)
-                    {
-                        User32.SetWindowPos(unityWindow, defView, 0, 0, 0, 0,
-                            SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
-                        string aboveName = above == IntPtr.Zero ? "NULL(本窗口在最顶层)" : GetClassNameOf(above);
-                        Debug.Log("[Heartbeat] z 序校正：本窗口上方是 " + aboveName
-                            + "（应为 SHELLDLL_DefView），已重新插到图标层之下");
-                    }
-                }
+                //     逻辑已抽到 EnsureZOrderBelowIcons()，托盘菜单关闭后也会兜底调用一次
+                //     （模态菜单循环期间 Update 停摆，5 秒周期校正无法自愈）。
+                //     注意：菜单已改用独立宿主窗口，正常路径不会改动 z 序，此处兜底通常直接返回。
+                EnsureZOrderBelowIcons();
             }
         }
 

@@ -244,6 +244,19 @@ public class User32
     [DllImport("user32.dll")]
     public static extern IntPtr CallWindowProc(IntPtr lpPrevWndFunc, IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
 
+    // 托盘右键菜单的独立宿主窗口（1x1 透明隐藏窗口）。
+    // 用系统预定义 "Static" 类，省去 RegisterClass；菜单不能再用壁纸窗口当宿主，
+    // 否则 SetForegroundWindow 会激活壁纸窗口并改变它在 Progman 子窗口链中的 z 序，
+    // 导致桌面图标层整片重绘（图标闪一下 / 被盖住）。
+    [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr CreateWindowEx(
+        int dwExStyle, string lpClassName, string lpWindowName, int dwStyle,
+        int x, int y, int nWidth, int nHeight,
+        IntPtr hWndParent, IntPtr hMenu, IntPtr hInstance, IntPtr lpParam);
+
+    [DllImport("user32.dll")]
+    public static extern IntPtr DefWindowProc(IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam);
+
     // http://www.pinvoke.net/default.aspx/user32/CreatePopupMenu.html
     [DllImport("user32")]
     public static extern IntPtr CreatePopupMenu();

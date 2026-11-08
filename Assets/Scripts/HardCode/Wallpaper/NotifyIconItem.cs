@@ -19,14 +19,33 @@ public class NotifyIconItem
     private const int HideID = 1003;                     // 任务栏菜单—隐藏壁纸
     private const int QuitID = 1004;                     // 任务栏菜单—退出
 
+    // ---------- 托盘右键菜单的独立宿主窗口 ----------
+    // 【为什么】壁纸窗口是 Progman 下的 WS_CHILD，必须靠 z 序压在 SHELLDLL_DefView 之下。
+    // 若用它当菜单 owner，SetForegroundWindow 会激活它并提到子链最顶端；
+    // 事后压回又要改一次 z 序 —— 两次变化会让 Explorer 的图标层整片重绘，
+    // 表现为「桌面图标一起闪一下」。故菜单全程不碰壁纸窗口。
+    private const int WS_POPUP = unchecked((int)0x80000000);
+    private const int WS_VISIBLE = 0x10000000;
+    private const int WS_EX_TOOLWINDOW = 0x00000080;
+    private const int WS_EX_LAYERED = 0x00080000;
+    private const uint LWA_ALPHA = 0x00000002;
+    private const int GWLP_WNDPROC = -4;
+
+    private static IntPtr m_MenuHost = IntPtr.Zero;
+    private static IntPtr m_MenuHostOldProc = IntPtr.Zero;
+    // 静态持有委托，防止被 GC 回收（回调来自非托管代码）
+    private static User32.WndProcDelegate m_MenuHostProc;
+
     public void Init()
     {
         InitWndProc();
+        CreateMenuHost();
         CreateNotifyIcon(); 
     }
 
     public void Dispose()
     {
+        DestroyMenuHost();
         TermWndProc();
     }
 
@@ -55,6 +74,79 @@ public class NotifyIconItem
         {
             Debug.Log("创建任务栏图标成功");
         }
+    }
+
+    // ========================================================================
+    // 托盘菜单宿主窗口
+    // ========================================================================
+
+    /// <summary>
+    /// 创建 1x1 全透明、位于屏幕外的顶层工具窗口，专门接收 SetForegroundWindow /
+    /// TrackPopupMenuEx。它可激活、不产生任何可见像素、不进任务栏。
+    /// 用系统预定义 "Static" 类，省去 RegisterClass。
+    /// </summary>
+    private static void CreateMenuHost()
+    {
+        if (m_MenuHost != IntPtr.Zero)
+        {
+            return;
+        }
+        m_MenuHost = User32.CreateWindowEx(
+            WS_EX_TOOLWINDOW | WS_EX_LAYERED,
+            "Static", null,
+            WS_POPUP | WS_VISIBLE,
+            -100, -100, 1, 1,
+            IntPtr.Zero, IntPtr.Zero,
+            User32.GetModuleHandle(null), IntPtr.Zero);
+
+        if (m_MenuHost == IntPtr.Zero)
+        {
+            Debug.LogWarning("[TrayMenu] 菜单宿主窗口创建失败，回退为壁纸窗口");
+            return;
+        }
+
+        // alpha=0 → 完全透明，避免屏幕上出现任何像素
+        User32.SetLayeredWindowAttributes(m_MenuHost, 0, 0, LWA_ALPHA);
+
+        // 子类化：菜单点击的 WM_COMMAND 会发给本窗口，转发回主窗口 WndProc
+        m_MenuHostProc = new User32.WndProcDelegate(MenuHostWndProc);
+        m_MenuHostOldProc = User32.SetWindowLongPtr(
+            new HandleRef(null, m_MenuHost), GWLP_WNDPROC,
+            Marshal.GetFunctionPointerForDelegate(m_MenuHostProc));
+    }
+
+    private static void DestroyMenuHost()
+    {
+        if (m_MenuHost == IntPtr.Zero)
+        {
+            return;
+        }
+        if (m_MenuHostOldProc != IntPtr.Zero)
+        {
+            User32.SetWindowLongPtr(new HandleRef(null, m_MenuHost), GWLP_WNDPROC, m_MenuHostOldProc);
+        }
+        User32.DestroyWindow(m_MenuHost);
+        m_MenuHost = IntPtr.Zero;
+        m_MenuHostOldProc = IntPtr.Zero;
+        m_MenuHostProc = null;
+    }
+
+    /// <summary>
+    /// 宿主窗口过程：只把 WM_COMMAND 转交给壁纸窗口原有的 WndProc，
+    /// 复用「关于 / 显示 / 隐藏 / 退出」处理逻辑，其余交给默认过程。
+    /// </summary>
+    [MonoPInvokeCallback]
+    private static IntPtr MenuHostWndProc(IntPtr hWnd, uint msg, IntPtr wParam, IntPtr lParam)
+    {
+        if (msg == User32.WM_COMMAND)
+        {
+            return WndProc(m_HWnd, msg, wParam, lParam);
+        }
+        if (m_MenuHostOldProc != IntPtr.Zero)
+        {
+            return User32.CallWindowProc(m_MenuHostOldProc, hWnd, msg, wParam, lParam);
+        }
+        return User32.DefWindowProc(hWnd, msg, wParam, lParam);
     }
 
     #region 监听窗体事件
@@ -218,19 +310,32 @@ public class NotifyIconItem
         User32.AppendMenu(menuPtr, User32.MenuFlags.MF_STRING, HideID, "隐藏");
         User32.AppendMenu(menuPtr, User32.MenuFlags.MF_STRING, QuitID, "退出");
 
+        // 菜单宿主用独立的 1x1 透明隐藏窗口，绝不能用壁纸窗口 m_HWnd：
+        // 对壁纸窗口 SetForegroundWindow 会改变它在 Progman 子窗口链里的 z 序，
+        // 两次 z 序变化（提上去 + 压回来）会让桌面图标层整片重绘 → 图标一起闪一下。
+        IntPtr host = m_MenuHost != IntPtr.Zero ? m_MenuHost : m_HWnd;
+
         // 注意:调用SetForegroundWindow是为了鼠标点击别处时隐藏弹出的菜单，不能省略
         // https://stackoverflow.com/questions/4145561/system-tray-context-menu-doesnt-disappear
-        User32.SetForegroundWindow(m_HWnd);
-        // 菜单点击时会发送WinUser32.WM_COMMAND消息,wParam为菜单的ID值
+        User32.SetForegroundWindow(host);
+
+        // 菜单点击时发送 WM_COMMAND，由 MenuHostWndProc 转发回主窗口 WndProc 处理
         User32.TrackPopupMenuEx(
             menuPtr,
             2,
             cursorPoint.X,
             cursorPoint.Y,
-            m_HWnd,
+            host,
             IntPtr.Zero
         );
         User32.DestroyMenu(menuPtr);
+
+        // 兜底：仅当壁纸窗口 z 序真的漂移时才校正。正常情况下内部直接 return，
+        // 不触发 SetWindowPos，因此不会引起图标重绘（无闪烁）。
+        if (Controller != null)
+        {
+            Controller.EnsureZOrderBelowIcons(false);
+        }
     }
 
     class MonoPInvokeCallbackAttribute : Attribute
